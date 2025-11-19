@@ -14,8 +14,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Trash2, Pencil } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
-import { SyncStatus } from "@/components/SyncStatus";
-import { getSyncManager } from "@/utils/SyncManager";
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { saveAs } from 'file-saver';
@@ -98,14 +96,15 @@ function useCreacionStore(userKey, isEditing) {
         return;
       }
       const json = await res.json();
-      // ✅ Filtrar items eliminados (soft delete)
+      // ✅ Cargar TODOS los items (incluyendo eliminados) para evitar pérdida de datos
+      // El filtrado se hará en la UI al mostrar
       setDataState({
-        clientes: (json.clientes || []).filter(x => !x.deleted),
-        cotizaciones: (json.cotizaciones || []).filter(x => !x.deleted),
-        ordenesCompra: (json.ordenesCompra || []).filter(x => !x.deleted),
-        ordenesTrabajo: (json.ordenesTrabajo || []).filter(x => !x.deleted)
+        clientes: json.clientes || [],
+        cotizaciones: json.cotizaciones || [],
+        ordenesCompra: json.ordenesCompra || [],
+        ordenesTrabajo: json.ordenesTrabajo || []
       });
-      console.log('[CreacionPage] Datos cargados');
+      console.log('[CreacionPage] Datos cargados (incluyendo eliminados)');
     } catch (e) {
       console.error('Error al cargar datos de creación:', e);
     } finally {
@@ -193,22 +192,8 @@ function useCreacionStore(userKey, isEditing) {
     console.log('═══════════════════════════════════════');
 
     try {
-      // Obtener datos actuales para preservar items eliminados
-      const getCurrentRes = await fetch(`${API_BASE}/api/creacion?key=${encodeURIComponent(userKey)}`);
-      let fullData = newData;
-
-      if (getCurrentRes.ok) {
-        const current = await getCurrentRes.json();
-
-        // Preservar items eliminados (soft delete)
-        fullData = {
-          clientes: [...newData.clientes, ...(current.clientes || []).filter(x => x.deleted)],
-          cotizaciones: [...newData.cotizaciones, ...(current.cotizaciones || []).filter(x => x.deleted)],
-          ordenesCompra: [...newData.ordenesCompra, ...(current.ordenesCompra || []).filter(x => x.deleted)],
-          ordenesTrabajo: [...newData.ordenesTrabajo, ...(current.ordenesTrabajo || []).filter(x => x.deleted)]
-        };
-      }
-
+      // ✅ newData ya incluye TODOS los items (eliminados y no eliminados)
+      // porque ahora se mantienen en el estado desde loadData
       const url = `${API_BASE}/api/creacion?key=${encodeURIComponent(userKey)}`;
 
       const response = await fetch(url, {
@@ -216,7 +201,7 @@ function useCreacionStore(userKey, isEditing) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(fullData)
+        body: JSON.stringify(newData)
       });
       
       console.log('📥 Status recibido:', response.status);
@@ -229,8 +214,15 @@ function useCreacionStore(userKey, isEditing) {
       
       const result = await response.json();
       console.log('✅ Respuesta exitosa:', result);
-      
-      setDataState(newData);
+
+      // Actualizar estado UI solo con items visibles (filtrar eliminados)
+      const dataForUI = {
+        clientes: (newData.clientes || []).filter(x => !x.deleted),
+        cotizaciones: (newData.cotizaciones || []).filter(x => !x.deleted),
+        ordenesCompra: (newData.ordenesCompra || []).filter(x => !x.deleted),
+        ordenesTrabajo: (newData.ordenesTrabajo || []).filter(x => !x.deleted)
+      };
+      setDataState(dataForUI);
       console.log('✅ Estado local actualizado');
       
     } catch (e) {
@@ -295,10 +287,11 @@ export default function CreacionPage() {
     return clienteEnEdicion !== null || editRef !== null;
   });
 
-  const clientes = data.clientes || [];
-  const cotizaciones = data.cotizaciones || [];
-  const ordenesCompra = data.ordenesCompra || [];
-  const ordenesTrabajo = data.ordenesTrabajo || []; // ✅ NUEVO
+  // ✅ Filtrar items eliminados solo para mostrar en la UI
+  const clientes = (data.clientes || []).filter(x => !x.deleted);
+  const cotizaciones = (data.cotizaciones || []).filter(x => !x.deleted);
+  const ordenesCompra = (data.ordenesCompra || []).filter(x => !x.deleted);
+  const ordenesTrabajo = (data.ordenesTrabajo || []).filter(x => !x.deleted);
 
   // Estados de filtros
   const [filtrosCot, setFiltrosCot] = useState({
@@ -1558,9 +1551,6 @@ export default function CreacionPage() {
                   Órdenes de Trabajo
                 </TabsTrigger>
               </TabsList>
-
-              {/* Indicador de sincronización */}
-              <SyncStatus userKey={authUser?.userKey} />
             </div>
           </Tabs>
         </div>

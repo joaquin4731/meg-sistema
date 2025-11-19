@@ -12,8 +12,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Upload, Trash2, FileText } from "lucide-react";
-import { SyncStatus } from "@/components/SyncStatus";
-import { getSyncManager } from "@/utils/SyncManager";
 
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, CartesianGrid,
@@ -26,6 +24,9 @@ import { saveAs } from 'file-saver';
 /********************
  * UTILIDADES
  *******************/
+// API Base URL - Siempre localhost:3001 porque Express corre localmente en Electron
+const API_BASE = 'http://localhost:3001';
+
 const CLP = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
 const fmtMoney = (n) => CLP.format(Math.round(n || 0));
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -186,9 +187,6 @@ function useStore(userKey, toast, isEditing) {
   const [data, setData] = useState({ cotizaciones: [] });
   const [loading, setLoading] = useState(true);
 
-  // Siempre usar localhost:3001 porque Express corre localmente en Electron
-  const API_BASE = 'http://localhost:3001';
-
   // Función de carga de datos (extraída para poder reutilizarla)
   const loadData = useCallback(async () => {
     try {
@@ -216,38 +214,12 @@ function useStore(userKey, toast, isEditing) {
     loadData();
   }, [loadData]);
 
-  // Escuchar eventos de sincronización y recargar datos cuando termine
-  // IMPORTANTE: Solo recargar si NO hay edición activa (callback isEditing)
-  useEffect(() => {
-    if (!userKey) return;
-
-    try {
-      const syncManager = getSyncManager(userKey);
-
-      const unsubscribe = syncManager.subscribe((event) => {
-        if (event.type === 'sync-success') {
-          // Verificar si hay edición activa usando el callback
-          if (typeof isEditing === 'function' && isEditing()) {
-            console.log('[CotizacionesPage] Sincronización exitosa pero hay edición activa, omitiendo recarga');
-            return;
-          }
-
-          console.log('[CotizacionesPage] Sincronización exitosa, recargando datos...');
-          loadData();
-        }
-      });
-
-      return () => {
-        unsubscribe();
-      };
-    } catch (error) {
-      console.error('[CotizacionesPage] Error al suscribirse a sync:', error);
-    }
-  }, [userKey, loadData, isEditing]);
-
   const saveData = async (newData) => {
     try {
-      console.log('[CotizacionesPage] Guardando datos...');
+      console.log('[SAVE] 💾 Guardando datos...');
+      console.log('[SAVE] 📊 Datos a guardar - Total:', newData.cotizaciones?.length);
+      console.log('[SAVE] 📊 Datos a guardar - Visibles:', newData.cotizaciones?.filter(x => !x.deleted).length);
+      console.log('[SAVE] 📊 Datos a guardar - Eliminadas:', newData.cotizaciones?.filter(x => x.deleted).length);
 
       // 1. Obtener datos completos actuales
       const getCurrentDataRes = await fetch(`${API_BASE}/api/data?key=${userKey}`);
@@ -259,16 +231,14 @@ function useStore(userKey, toast, isEditing) {
         fullData = await getCurrentDataRes.json();
       }
 
-      // 2. Actualizar cotizaciones preservando las eliminadas (soft delete)
-      const cotizacionesEliminadas = (fullData.cotizaciones || []).filter(x => x.deleted);
-      const cotizacionesActualizadas = newData.cotizaciones || [];
-      fullData.cotizaciones = [...cotizacionesActualizadas, ...cotizacionesEliminadas];
+      // 2. Actualizar cotizaciones (ya vienen todas, incluyendo las marcadas como deleted: true)
+      fullData.cotizaciones = newData.cotizaciones || [];
 
       // 3. Guardar en /api/data (apartado principal - registro manual)
       const response = await fetch(`${API_BASE}/api/data?key=${userKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: fullData }),
+        body: JSON.stringify(fullData), // ✅ Enviar estructura plana {cotizaciones: [...]}
       });
 
       if (!response.ok) {
@@ -278,8 +248,14 @@ function useStore(userKey, toast, isEditing) {
         return;
       }
 
-      console.log('[CotizacionesPage] ✅ Datos guardados y sincronizados');
-      setData(newData);
+      console.log('[SAVE] ✅ Datos guardados en backend');
+      // Actualizar estado UI solo con cotizaciones visibles (filtrar eliminadas)
+      const dataForUI = {
+        ...newData,
+        cotizaciones: (newData.cotizaciones || []).filter(x => !x.deleted)
+      };
+      console.log('[SAVE] 📊 Actualizando UI con', dataForUI.cotizaciones.length, 'cotizaciones visibles');
+      setData(dataForUI);
     } catch (e) {
       toast.error('Error al conectar con el servidor. Verifica que la aplicación esté activa.');
       console.error(e);
@@ -452,7 +428,7 @@ export default function App() {
     return <LoginScreen />;
   }
 
-  return <MainApp user={user.userKey} company={user.company} onLogout={logout} />;
+  return <MainApp user={user} company={user.company} onLogout={logout} />;
 }
 
 function MainApp({ user, company, onLogout }) {
@@ -592,22 +568,25 @@ const compData = useMemo(() => ([
       .filter(x=>x.value>0);
   }, [data?.cotizaciones, usarNetoSinIVA]);
 
-  // Exportar / Importar
+  // Exportar / Importar (apartado actual)
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `meg-industrial-${todayISO()}.json`;
+    a.download = `${user}-apartado-${todayISO()}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success("Apartado exportado exitosamente");
   };
+
   const importJSON = (file) => {
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
         setData(parsed);
+        toast.success("Apartado importado exitosamente");
       } catch(e){
         toast.error("Archivo inválido. Verifica que sea un archivo JSON válido.");
       }
@@ -615,16 +594,88 @@ const compData = useMemo(() => ([
     reader.readAsText(file);
   };
 
+  // Backup Completo (TODOS los apartados)
+  const exportBackupCompleto = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/backup/export-all`);
+      if (!res.ok) {
+        toast.error('Error al exportar backup completo');
+        return;
+      }
+
+      const backup = await res.json();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `MEG-Sistema-COMPLETO-${todayISO()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Backup completo exportado exitosamente");
+    } catch (e) {
+      console.error('Error exportando backup completo:', e);
+      toast.error('Error al exportar backup completo');
+    }
+  };
+
+  const importBackupCompleto = (file) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const backup = JSON.parse(String(reader.result));
+
+        if (!backup.data) {
+          toast.error("Formato de backup inválido");
+          return;
+        }
+
+        const res = await fetch(`${API_BASE}/api/backup/import-all`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(backup)
+        });
+
+        if (!res.ok) {
+          toast.error('Error al importar backup completo');
+          return;
+        }
+
+        const result = await res.json();
+        toast.success(`Backup restaurado: ${result.imported} apartados`);
+
+        // Recargar página para reflejar cambios
+        setTimeout(() => window.location.reload(), 1500);
+      } catch(e){
+        console.error('Error importando backup:', e);
+        toast.error("Error al importar backup completo");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   // Duplicar cotización
-const duplicarCotizacion = (c) => {
-  const copia = deepClone(c);
-  copia.id = uid();
-  copia.numero = c.numero + "-COPY";
-  copia.fecha = todayISO();
-  const cotizaciones = data?.cotizaciones || [];
-  const nuevasCotizaciones = [copia, ...cotizaciones];
-  setData({ ...data, cotizaciones: nuevasCotizaciones });
-  toast.success("Cotización duplicada exitosamente");
+const duplicarCotizacion = async (c) => {
+  try {
+    // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
+    const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+    if (!res.ok) {
+      toast.error('Error al cargar datos del servidor');
+      return;
+    }
+    const fullData = await res.json();
+    const todasLasCotizaciones = fullData?.cotizaciones || [];
+
+    const copia = deepClone(c);
+    copia.id = uid();
+    copia.numero = c.numero + "-COPY";
+    copia.fecha = todayISO();
+    const nuevasCotizaciones = [copia, ...todasLasCotizaciones];
+    setData({ ...data, cotizaciones: nuevasCotizaciones });
+    toast.success("Cotización duplicada exitosamente");
+  } catch (e) {
+    console.error('Error al duplicar cotización:', e);
+    toast.error('Error al duplicar la cotización');
+  }
 };
 
 
@@ -734,27 +785,32 @@ const exportToExcel = () => {
     <span>Creación</span>
   </Button>
 
+  {/* Separador */}
+  <div className="border-t border-white/20 my-2"></div>
+
+  {/* Backup del Sistema Completo */}
+  <div className="text-white/60 text-xs font-semibold px-2 py-1">RESPALDO DEL SISTEMA</div>
   <Button
     variant="ghost"
-    onClick={exportJSON}
+    onClick={exportBackupCompleto}
     className="w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10"
   >
-    <span>Exportar</span>
+    <span>💾 Exportar Backup</span>
   </Button>
   <label className="cursor-pointer inline-flex items-center w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10 p-2 rounded">
-    <span>Importar</span>
-
-
-    
+    <span>📥 Restaurar Backup</span>
     <input
       type="file"
       accept="application/json"
       className="hidden"
-      onChange={(e) => { const f = e.target.files?.[0]; if (f) importJSON(f); }}
+      onChange={(e) => { const f = e.target.files?.[0]; if (f) importBackupCompleto(f); }}
     />
   </label>
 
-    <Button
+  {/* Separador */}
+  <div className="border-t border-white/20 my-2"></div>
+
+  <Button
     variant="ghost"
     onClick={onLogout}
     className="w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10"
@@ -786,9 +842,6 @@ const exportToExcel = () => {
                   Nueva cotización
                 </TabsTrigger>
               </TabsList>
-
-              {/* Indicador de sincronización */}
-              <SyncStatus userKey={user} />
             </div>
           </div>
         </header>
@@ -1180,40 +1233,79 @@ const exportToExcel = () => {
   sel={sel}
   setSel={setSel}
   onDuplicar={duplicarCotizacion}
-  onSaveCotizacion={(updated) => {
-    const cotizaciones = data?.cotizaciones || [];
-    const nuevasCotizaciones = cotizaciones.map(x =>
-      x.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : x
-    );
-    setData({ ...data, cotizaciones: nuevasCotizaciones });
+  onSaveCotizacion={async (updated) => {
+    try {
+      // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
+      const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+      if (!res.ok) {
+        toast.error('Error al cargar datos del servidor');
+        return;
+      }
+      const fullData = await res.json();
+      const todasLasCotizaciones = fullData?.cotizaciones || [];
+
+      const nuevasCotizaciones = todasLasCotizaciones.map(x =>
+        x.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : x
+      );
+      setData({ ...data, cotizaciones: nuevasCotizaciones });
+    } catch (e) {
+      console.error('Error al guardar cotización:', e);
+      toast.error('Error al guardar la cotización');
+    }
   }}
-  onDeleteCotizacion={(id) => {
-    const cotizaciones = data?.cotizaciones || [];
-    // Soft delete: marcar como deleted y eliminar PDFs para ahorrar espacio
-    const nuevasCotizaciones = cotizaciones.map(x => {
-      if (x.id !== id) return x;
+  onDeleteCotizacion={async (id) => {
+    try {
+      console.log('[DELETE] 🗑️ Eliminando cotización con ID:', id);
 
-      // Eliminar PDFs de la cotización y sus sub-entidades para reducir tamaño
-      const cleaned = {
-        ...x,
-        deleted: true,
-        updatedAt: new Date().toISOString(),
-        pdfs: [], // Eliminar PDFs raíz
-        oc: x.oc ? { ...x.oc, pdfs: [] } : x.oc, // Eliminar PDFs de OC
-        ot: x.ot ? {
-          ...x.ot,
-          pdfs: [], // Eliminar PDFs de OT
-          items: (x.ot.items || []).map(item => ({ ...item, pdfs: [] })) // Eliminar PDFs de items
-        } : x.ot,
-        facturas: (x.facturas || []).map(f => ({ ...f, pdfs: [] })), // Eliminar PDFs de facturas
-        financiamiento: x.financiamiento ? { ...x.financiamiento, pdfs: [] } : x.financiamiento
-      };
+      // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
+      const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+      if (!res.ok) {
+        toast.error('Error al cargar datos del servidor');
+        return;
+      }
+      const fullData = await res.json();
+      const todasLasCotizaciones = fullData?.cotizaciones || [];
 
-      return cleaned;
-    });
-    // Filtrar las eliminadas del estado local para que desaparezcan de la UI inmediatamente
-    const cotizacionesVisibles = nuevasCotizaciones.filter(x => !x.deleted);
-    setData({ ...data, cotizaciones: cotizacionesVisibles });
+      console.log('[DELETE] 📊 Total de cotizaciones en backend:', todasLasCotizaciones.length);
+      console.log('[DELETE] 📊 Cotizaciones visibles:', todasLasCotizaciones.filter(x => !x.deleted).length);
+      console.log('[DELETE] 📊 Cotizaciones eliminadas:', todasLasCotizaciones.filter(x => x.deleted).length);
+
+      // Soft delete: marcar como deleted y eliminar PDFs para ahorrar espacio
+      const nuevasCotizaciones = todasLasCotizaciones.map(x => {
+        if (x.id !== id) return x;
+
+        console.log('[DELETE] ✅ Marcando como eliminada:', x.numero || x.id);
+
+        // Eliminar PDFs de la cotización y sus sub-entidades para reducir tamaño
+        const cleaned = {
+          ...x,
+          deleted: true,
+          updatedAt: new Date().toISOString(),
+          pdfs: [], // Eliminar PDFs raíz
+          oc: x.oc ? { ...x.oc, pdfs: [] } : x.oc, // Eliminar PDFs de OC
+          ot: x.ot ? {
+            ...x.ot,
+            pdfs: [], // Eliminar PDFs de OT
+            items: (x.ot.items || []).map(item => ({ ...item, pdfs: [] })) // Eliminar PDFs de items
+          } : x.ot,
+          facturas: (x.facturas || []).map(f => ({ ...f, pdfs: [] })), // Eliminar PDFs de facturas
+          financiamiento: x.financiamiento ? { ...x.financiamiento, pdfs: [] } : x.financiamiento
+        };
+
+        return cleaned;
+      });
+
+      console.log('[DELETE] 📊 Después de marcar eliminada:');
+      console.log('[DELETE] 📊   Total:', nuevasCotizaciones.length);
+      console.log('[DELETE] 📊   Visibles:', nuevasCotizaciones.filter(x => !x.deleted).length);
+      console.log('[DELETE] 📊   Eliminadas:', nuevasCotizaciones.filter(x => x.deleted).length);
+
+      // ✅ Enviar TODAS las cotizaciones (incluyendo eliminadas con deleted: true) para sincronización correcta
+      setData({ ...data, cotizaciones: nuevasCotizaciones });
+    } catch (e) {
+      console.error('Error al eliminar cotización:', e);
+      toast.error('Error al eliminar la cotización');
+    }
   }}
 />
         </TabsContent>
@@ -1224,10 +1316,23 @@ const exportToExcel = () => {
             <CardContent className="p-6 space-y-6">
               <h3 className="text-xl font-semibold">Crear Cotización</h3>
               <CotizacionForm
-                onSave={(c) => {
-                  const cotizaciones = data?.cotizaciones || [];
-                  const nuevasCotizaciones = [c, ...cotizaciones];
-                  setData({ ...data, cotizaciones: nuevasCotizaciones });
+                onSave={async (c) => {
+                  try {
+                    // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
+                    const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+                    if (!res.ok) {
+                      toast.error('Error al cargar datos del servidor');
+                      return;
+                    }
+                    const fullData = await res.json();
+                    const todasLasCotizaciones = fullData?.cotizaciones || [];
+
+                    const nuevasCotizaciones = [c, ...todasLasCotizaciones];
+                    setData({ ...data, cotizaciones: nuevasCotizaciones });
+                  } catch (e) {
+                    console.error('Error al crear cotización:', e);
+                    toast.error('Error al crear la cotización');
+                  }
                 }}
               />
             </CardContent>
@@ -1451,6 +1556,15 @@ function PDFManager({ label, files = [], onChange }){
  *******************/
 function CotizacionForm({ onSave }){
   const toast = useToast();
+  const { user } = useAuth();
+
+  // Cargar datos del apartado de creación para autocompletado
+  const [datosCreacion, setDatosCreacion] = useState({ cotizaciones: [], ordenesCompra: [] });
+  const [cargandoCreacion, setCargandoCreacion] = useState(true);
+
+  // Estados de búsqueda para filtrar opciones
+  const [busquedaCot, setBusquedaCot] = useState("");
+  const [busquedaOC, setBusquedaOC] = useState("");
 
   // Datos clave
   const [numero, setNumero] = useState(
@@ -1521,6 +1635,68 @@ function CotizacionForm({ onSave }){
   const factSumBruto = facturas.reduce((s,f)=> s + Number(f.total||0), 0);
   const utilidadRef  = Math.max(factSumBruto - otTotal, 0);
 
+  // Cargar datos del apartado de creación
+  useEffect(() => {
+    const cargarDatosCreacion = async () => {
+      try {
+        const res = await fetch(`http://localhost:3001/api/creacion?key=${encodeURIComponent(user)}`);
+        if (res.ok) {
+          const json = await res.json();
+          setDatosCreacion({
+            cotizaciones: (json.cotizaciones || []).filter(x => !x.deleted),
+            ordenesCompra: (json.ordenesCompra || []).filter(x => !x.deleted)
+          });
+        }
+      } catch (e) {
+        console.error('Error al cargar datos de creación:', e);
+      } finally {
+        setCargandoCreacion(false);
+      }
+    };
+    cargarDatosCreacion();
+  }, [user]);
+
+  // Autocompletar desde cotización del apartado de creación
+  const autocompletarDesdeCotizacion = (cotizacionId) => {
+    const cotSeleccionada = datosCreacion.cotizaciones.find(c => c.id === cotizacionId);
+    if (!cotSeleccionada) return;
+
+    // Actualizar campos
+    if (cotSeleccionada.cliente) {
+      const nombreCliente = typeof cotSeleccionada.cliente === 'object'
+        ? (cotSeleccionada.cliente.nombre || cotSeleccionada.cliente.empresa || '')
+        : cotSeleccionada.cliente;
+      setCliente(nombreCliente);
+    }
+    if (cotSeleccionada.cliente?.rut) setRUT(cotSeleccionada.cliente.rut);
+    if (cotSeleccionada.solicitud) setSolicitud(cotSeleccionada.solicitud);
+    if (cotSeleccionada.comentarios) setComentarios(cotSeleccionada.comentarios);
+    if (cotSeleccionada.fecha) setFecha(cotSeleccionada.fecha);
+    if (cotSeleccionada.monto != null) setMontoCot(Number(cotSeleccionada.monto) || 0);
+    if (cotSeleccionada.pdfs) setCotPDFs([...cotSeleccionada.pdfs]);
+
+    setBusquedaCot(""); // Limpiar búsqueda
+    toast.success('Datos autocompletados desde cotización de creación');
+  };
+
+  // Autocompletar desde OC del apartado de creación
+  const autocompletarDesdeOC = (ocId) => {
+    const ocSeleccionada = datosCreacion.ordenesCompra.find(oc => oc.id === ocId);
+    if (!ocSeleccionada) return;
+
+    // Actualizar campos de OC
+    if (ocSeleccionada.clienteNombre) setOCClienteNombre(ocSeleccionada.clienteNombre);
+    if (ocSeleccionada.clienteRUT) setOCClienteRUT(ocSeleccionada.clienteRUT);
+    if (ocSeleccionada.codigo) setOCCodigo(ocSeleccionada.codigo);
+    if (ocSeleccionada.monto != null) setOCMonto(Number(ocSeleccionada.monto) || 0);
+    if (ocSeleccionada.descripcion) setOCDescripcion(ocSeleccionada.descripcion);
+    if (ocSeleccionada.comentarios) setOCComentarios(ocSeleccionada.comentarios);
+    if (ocSeleccionada.pdfs) setOCPDFs([...ocSeleccionada.pdfs]);
+
+    setBusquedaOC(""); // Limpiar búsqueda
+    toast.success('Datos de OC autocompletados desde creación');
+  };
+
   const save = () => {
     if (!cliente) { toast.error("Ingresa el cliente/empresa"); return; }
     if (!rut) { toast.error("Ingresa el RUT del cliente/empresa"); return; }
@@ -1585,6 +1761,91 @@ const c = {
 
   return (
     <div className="space-y-8">
+      {/* Autocompletado desde apartado de creación */}
+      {!cargandoCreacion && (datosCreacion.cotizaciones.length > 0 || datosCreacion.ordenesCompra.length > 0) && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h5 className="text-sm font-semibold text-blue-900 mb-3">Autocompletar desde Apartado de Creación</h5>
+          <div className="grid md:grid-cols-2 gap-4">
+            {datosCreacion.cotizaciones.length > 0 && (
+              <div className="space-y-2">
+                <Field label="Buscar Cotización (opcional)">
+                  <Input
+                    value={busquedaCot}
+                    onChange={e => setBusquedaCot(e.target.value)}
+                    placeholder="Escribe para filtrar..."
+                    className="w-full"
+                  />
+                </Field>
+                {busquedaCot && (
+                  <div className="max-h-48 overflow-y-auto border border-slate-300 rounded-md bg-white">
+                    {datosCreacion.cotizaciones
+                      .filter(c => {
+                        const numero = c.numero || '';
+                        const cliente = typeof c.cliente === 'object'
+                          ? (c.cliente?.nombre || c.cliente?.empresa || '')
+                          : (c.cliente || '');
+                        const search = busquedaCot.toLowerCase();
+                        return numero.toLowerCase().includes(search) ||
+                               cliente.toLowerCase().includes(search);
+                      })
+                      .map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => autocompletarDesdeCotizacion(c.id)}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-100 text-sm border-b border-slate-200 last:border-b-0"
+                        >
+                          <div className="font-medium text-slate-900">{c.numero || 'Sin número'}</div>
+                          <div className="text-xs text-slate-600">
+                            {typeof c.cliente === 'object' ? (c.cliente?.nombre || c.cliente?.empresa) : c.cliente || 'Sin cliente'}
+                            {c.monto ? ` • ${fmtMoney(c.monto)}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {datosCreacion.ordenesCompra.length > 0 && (
+              <div className="space-y-2">
+                <Field label="Buscar OC (opcional)">
+                  <Input
+                    value={busquedaOC}
+                    onChange={e => setBusquedaOC(e.target.value)}
+                    placeholder="Escribe para filtrar..."
+                    className="w-full"
+                  />
+                </Field>
+                {busquedaOC && (
+                  <div className="max-h-48 overflow-y-auto border border-slate-300 rounded-md bg-white">
+                    {datosCreacion.ordenesCompra
+                      .filter(oc => {
+                        const codigo = oc.codigo || oc.numero || '';
+                        const cliente = oc.clienteNombre || '';
+                        const search = busquedaOC.toLowerCase();
+                        return codigo.toLowerCase().includes(search) ||
+                               cliente.toLowerCase().includes(search);
+                      })
+                      .map(oc => (
+                        <button
+                          key={oc.id}
+                          onClick={() => autocompletarDesdeOC(oc.id)}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-100 text-sm border-b border-slate-200 last:border-b-0"
+                        >
+                          <div className="font-medium text-slate-900">{oc.codigo || oc.numero || 'Sin código'}</div>
+                          <div className="text-xs text-slate-600">
+                            {oc.clienteNombre || 'Sin cliente'}
+                            {oc.monto ? ` • ${fmtMoney(oc.monto)}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Datos clave */}
     <section className="grid md:grid-cols-3 gap-4">
   <Field label="Codigo Cotización"><Input value={numero} onChange={e=>setNumero(e.target.value)} /></Field>
@@ -2549,6 +2810,10 @@ function DetalleCotizacionEditable({ initial, usarNetoSinIVA, onSave, onDelete }
   const [datosCreacion, setDatosCreacion] = useState({ cotizaciones: [], ordenesCompra: [] });
   const [cargandoCreacion, setCargandoCreacion] = useState(true);
 
+  // Estados de búsqueda para filtrar opciones
+  const [busquedaCot, setBusquedaCot] = useState("");
+  const [busquedaOC, setBusquedaOC] = useState("");
+
   useEffect(() => {
     const cargarDatosCreacion = async () => {
       try {
@@ -2587,8 +2852,11 @@ function DetalleCotizacionEditable({ initial, usarNetoSinIVA, onSave, onDelete }
     if (cotSeleccionada.solicitud) updates.solicitud = cotSeleccionada.solicitud;
     if (cotSeleccionada.comentarios) updates.comentarios = cotSeleccionada.comentarios;
     if (cotSeleccionada.fecha) updates.fecha = cotSeleccionada.fecha;
+    if (cotSeleccionada.monto != null) updates.monto = Number(cotSeleccionada.monto) || 0;
+    if (cotSeleccionada.pdfs) updates.pdfs = [...cotSeleccionada.pdfs];
 
     setCot(prev => ({ ...prev, ...updates }));
+    setBusquedaCot(""); // Limpiar búsqueda
     toast.success('Datos autocompletados desde cotización de creación');
   };
 
@@ -2601,12 +2869,13 @@ function DetalleCotizacionEditable({ initial, usarNetoSinIVA, onSave, onDelete }
     if (ocSeleccionada.clienteNombre) ocPatch.clienteNombre = ocSeleccionada.clienteNombre;
     if (ocSeleccionada.clienteRUT) ocPatch.clienteRUT = ocSeleccionada.clienteRUT;
     if (ocSeleccionada.codigo) ocPatch.codigo = ocSeleccionada.codigo;
-    if (ocSeleccionada.monto) ocPatch.monto = ocSeleccionada.monto;
+    if (ocSeleccionada.monto != null) ocPatch.monto = Number(ocSeleccionada.monto) || 0;
     if (ocSeleccionada.descripcion) ocPatch.descripcion = ocSeleccionada.descripcion;
     if (ocSeleccionada.comentarios) ocPatch.comentarios = ocSeleccionada.comentarios;
     if (ocSeleccionada.pdfs) ocPatch.pdfs = [...ocSeleccionada.pdfs];
 
     setOC(ocPatch);
+    setBusquedaOC(""); // Limpiar búsqueda
     toast.success('Datos de OC autocompletados desde creación');
   };
 
@@ -2684,46 +2953,84 @@ const addFactura = () => setFacturas([
           <h5 className="text-sm font-semibold text-blue-900 mb-3">Autocompletar desde Apartado de Creación</h5>
           <div className="grid md:grid-cols-2 gap-4">
             {datosCreacion.cotizaciones.length > 0 && (
-              <Field label="Buscar Cotización (opcional)">
-                <select
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-                  onChange={(e) => {
-                    if (e.target.value) autocompletarDesdeCotizacion(e.target.value);
-                    e.target.value = '';
-                  }}
-                  defaultValue=""
-                >
-                  <option value="">Seleccionar cotización...</option>
-                  {datosCreacion.cotizaciones.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.numero || 'Sin número'} - {typeof c.cliente === 'object' ? (c.cliente?.nombre || c.cliente?.empresa) : c.cliente || 'Sin cliente'}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <div className="space-y-2">
+                <Field label="Buscar Cotización (opcional)">
+                  <Input
+                    value={busquedaCot}
+                    onChange={e => setBusquedaCot(e.target.value)}
+                    placeholder="Escribe para filtrar..."
+                    className="w-full"
+                  />
+                </Field>
+                {busquedaCot && (
+                  <div className="max-h-48 overflow-y-auto border border-slate-300 rounded-md bg-white">
+                    {datosCreacion.cotizaciones
+                      .filter(c => {
+                        const numero = c.numero || '';
+                        const cliente = typeof c.cliente === 'object'
+                          ? (c.cliente?.nombre || c.cliente?.empresa || '')
+                          : (c.cliente || '');
+                        const search = busquedaCot.toLowerCase();
+                        return numero.toLowerCase().includes(search) ||
+                               cliente.toLowerCase().includes(search);
+                      })
+                      .map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => autocompletarDesdeCotizacion(c.id)}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-100 text-sm border-b border-slate-200 last:border-b-0"
+                        >
+                          <div className="font-medium text-slate-900">{c.numero || 'Sin número'}</div>
+                          <div className="text-xs text-slate-600">
+                            {typeof c.cliente === 'object' ? (c.cliente?.nombre || c.cliente?.empresa) : c.cliente || 'Sin cliente'}
+                            {c.monto ? ` • ${fmtMoney(c.monto)}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
             )}
             {datosCreacion.ordenesCompra.length > 0 && (
-              <Field label="Buscar OC (opcional)">
-                <select
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-                  onChange={(e) => {
-                    if (e.target.value) autocompletarDesdeOC(e.target.value);
-                    e.target.value = '';
-                  }}
-                  defaultValue=""
-                >
-                  <option value="">Seleccionar OC...</option>
-                  {datosCreacion.ordenesCompra.map(oc => (
-                    <option key={oc.id} value={oc.id}>
-                      {oc.codigo || oc.numero || 'Sin código'} - {oc.clienteNombre || 'Sin cliente'}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <div className="space-y-2">
+                <Field label="Buscar OC (opcional)">
+                  <Input
+                    value={busquedaOC}
+                    onChange={e => setBusquedaOC(e.target.value)}
+                    placeholder="Escribe para filtrar..."
+                    className="w-full"
+                  />
+                </Field>
+                {busquedaOC && (
+                  <div className="max-h-48 overflow-y-auto border border-slate-300 rounded-md bg-white">
+                    {datosCreacion.ordenesCompra
+                      .filter(oc => {
+                        const codigo = oc.codigo || oc.numero || '';
+                        const cliente = oc.clienteNombre || '';
+                        const search = busquedaOC.toLowerCase();
+                        return codigo.toLowerCase().includes(search) ||
+                               cliente.toLowerCase().includes(search);
+                      })
+                      .map(oc => (
+                        <button
+                          key={oc.id}
+                          onClick={() => autocompletarDesdeOC(oc.id)}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-100 text-sm border-b border-slate-200 last:border-b-0"
+                        >
+                          <div className="font-medium text-slate-900">{oc.codigo || oc.numero || 'Sin código'}</div>
+                          <div className="text-xs text-slate-600">
+                            {oc.clienteNombre || 'Sin cliente'}
+                            {oc.monto ? ` • ${fmtMoney(oc.monto)}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
           <p className="text-xs text-blue-700 mt-2 italic">
-            Selecciona una cotización u OC para autocompletar los campos. Puedes editar manualmente después.
+            Escribe en los campos de búsqueda para filtrar y seleccionar. Los campos se autocompletarán y podrás editarlos manualmente.
           </p>
         </div>
       )}

@@ -1,209 +1,210 @@
-# MEG Industrial & MyOrganic - Sistema de Gestión
+# MEG Sistema - Sistema de Gestión Empresarial
 
-Aplicación de escritorio para gestión de cotizaciones, órdenes de compra y trabajo para MEG Industrial y MyOrganic.
+Sistema de escritorio multiplataforma para gestión de cotizaciones, órdenes de compra y órdenes de trabajo.
 
-## 🚀 Características
+## 🎯 Características Principales
 
-- ✅ **Aplicación de escritorio nativa** para Windows y Mac
-- ✅ **Funciona offline**: Base de datos SQLite local
-- ✅ **Sincronización con VPS**: Respaldo automático en la nube (próximamente)
-- ✅ **Gestión de cotizaciones**: Crear, editar, duplicar y exportar
-- ✅ **Órdenes de compra y trabajo**: Control completo del flujo operativo
-- ✅ **Gestión de clientes**: Base de datos integrada
-- ✅ **Análisis financiero**: Gráficos de ingresos, costos y utilidades
-- ✅ **Exportación**: PDF, Excel, JSON
-- ✅ **Multi-empresa**: MEG Industrial y MyOrganic en una sola app
+- ✅ **100% Local** - No requiere internet, todos los datos en tu computador
+- ✅ **Backup Automático** - Respaldos diarios automáticos
+- ✅ **Exportar/Importar** - Backup completo de todos los datos
+- ✅ **Multi-empresa** - Gestiona MEG Industrial y MyOrganic
+- ✅ **Generación de PDFs** - Crea cotizaciones, OC y OT profesionales
+- ✅ **Dashboard Financiero** - Gráficos de ingresos, costos y utilidades
+- ✅ **Exportación Excel** - Exporta datos a hojas de cálculo
 
-## 📋 Requisitos
+## 📦 Instalación
 
-- Node.js 18+
-- npm 9+
+### Windows
+1. Descarga `MEG-Sistema-Setup-X.X.X.exe` desde Releases
+2. Ejecuta el instalador
+3. Abre la aplicación
 
-## 🛠️ Instalación para Desarrollo
+### macOS
+1. Descarga `MEG-Sistema-X.X.X-x64.dmg`
+2. Arrastra a Aplicaciones
+3. Abre la aplicación
 
-```bash
-# 1. Instalar dependencias
-npm install
+### Linux
+1. Descarga `MEG-Sistema-X.X.X.AppImage`
+2. Dale permisos de ejecución: `chmod +x MEG-Sistema-X.X.X.AppImage`
+3. Ejecuta: `./MEG-Sistema-X.X.X.AppImage`
 
-# 2. Iniciar en modo desarrollo
-npm run dev
-```
+## 🔐 Credenciales
 
-Esto iniciará:
-- Vite dev server en `http://localhost:5173`
-- Electron con hot-reload
-- Express local en puerto 3001
+**Usuario MEG Industrial:**
+- Usuario: `meg_2025`
+- Contraseña: Configurar en variables de entorno (`MEG_PASSWORD`)
 
-## 📦 Compilar para Producción
-
-### Windows (.exe)
-```bash
-npm run build:win
-```
-
-### Mac (.dmg)
-```bash
-npm run build:mac
-```
-
-### Linux (.AppImage)
-```bash
-npm run build:linux
-```
-
-Los instaladores se generarán en la carpeta `release/`
-
-### 🍎 Compilar para Mac desde Windows
-
-**Problema**: Electron-builder no puede compilar completamente para Mac desde Windows.
-
-**Solución Recomendada: GitHub Actions** (Automático y Gratis)
-
-Este proyecto ya incluye GitHub Actions configurado (`.github/workflows/build.yml`):
-
-1. **Sube tu código a GitHub**
-2. **Crea un tag de versión**:
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-3. **GitHub compilará automáticamente** para Windows, Mac y Linux
-4. **Descarga los instaladores** desde la página de Releases
-
-**Alternativas**:
-- MacStadium / MacinCloud (Mac remota, $20-100/mes)
-- Pedir a alguien con Mac que ejecute `npm run build:mac`
-- Compilación cruzada limitada (sin firma, con advertencias de seguridad)
-
-Ver documentación completa en `build/README.md`
-
-## 🏗️ Arquitectura
-
-```
-┌─────────────────────────────────────┐
-│   Electron (Aplicación Escritorio) │
-├─────────────────────────────────────┤
-│                                     │
-│  ┌───────────────────────────┐     │
-│  │   Renderer (UI)           │     │
-│  │   React + Vite            │     │
-│  │   TailwindCSS + Radix UI  │     │
-│  └─────────┬─────────────────┘     │
-│            │ IPC                   │
-│  ┌─────────▼─────────────────┐     │
-│  │   Main Process (Backend)  │     │
-│  │   Express + SQLite Local  │     │
-│  └─────────┬─────────────────┘     │
-│            │                       │
-└────────────┼───────────────────────┘
-             │
-             │ HTTP (futuro)
-             ▼
-    ┌────────────────┐
-    │   VPS Remoto   │
-    │   (Sync)       │
-    └────────────────┘
-```
-
-## 📁 Estructura del Proyecto
-
-```
-meg-sistema/
-├── electron/           # Proceso principal de Electron
-│   ├── main.js        # Servidor Express + SQLite local
-│   └── preload.js     # Bridge seguro IPC
-│
-├── src/               # Frontend React
-│   ├── app/          # Estilos globales
-│   ├── components/   # Componentes UI (Radix)
-│   ├── pages/        # Páginas de la app
-│   │   ├── CotizacionesPage.jsx
-│   │   └── CreacionPage.jsx
-│   ├── App.jsx       # Router principal
-│   ├── main.jsx      # Entry point React
-│   └── index.html    # HTML base
-│
-├── backend/          # Backend separado (legacy, no usado en Electron)
-│   ├── server.js
-│   └── data.db
-│
-├── public/           # Assets estáticos
-├── dist/             # Build de Vite (generado)
-└── release/          # Instaladores (generado)
-```
-
-
+**Usuario MyOrganic:**
+- Usuario: `myorganic_2025`
+- Contraseña: Configurar en variables de entorno (`MYORGANIC_PASSWORD`)
 
 ## 💾 Ubicación de Datos
 
-La base de datos local se almacena en:
+### Base de Datos Local
+- **Windows:** `C:\Users\<Usuario>\AppData\Roaming\meg-sistema-electron\data.db`
+- **macOS:** `~/Library/Application Support/meg-sistema-electron/data.db`
+- **Linux:** `~/.config/meg-sistema-electron/data.db`
 
-- **Windows**: `C:\Users\<Usuario>\AppData\Roaming\meg-sistema-electron\data.db`
-- **Mac**: `~/Library/Application Support/meg-sistema-electron/data.db`
-- **Linux**: `~/.config/meg-sistema-electron/data.db`
+### Backups Automáticos
+- **Ubicación:** `Documentos/MEG-Sistema-Backups/`
+- **Frecuencia:** Diario (2:00 AM)
+- **Retención:** Últimos 30 backups (1 mes)
+- **Formato:** JSON con timestamp
 
-## 🔧 Scripts Disponibles
+## 📋 Uso del Sistema
 
-| Comando | Descripción |
-|---------|-------------|
-| `npm run dev` | Desarrollo con hot-reload |
-| `npm run dev:vite` | Solo Vite dev server |
-| `npm run dev:electron` | Solo Electron |
-| `npm run build` | Build completo + empaquetado |
-| `npm run build:win` | Build para Windows |
-| `npm run build:mac` | Build para Mac |
-| `npm run build:linux` | Build para Linux |
-| `npm run preview` | Preview del build de Vite |
-| `npm run electron` | Ejecutar Electron sin dev server |
+### Apartados Disponibles
 
-## ✨ Novedades en v1.1.0
+**1. Cotizaciones (Principal)**
+- Ver y gestionar cotizaciones existentes
+- Dashboard con gráficos financieros
+- Exportar a Excel
+- Gestionar OC, OT, Financiamiento
 
-- ✅ **Sistema de notificaciones Toast**: Notificaciones visuales profesionales
-- ✅ **Validación de RUT**: Componente con validación automática en tiempo real
-- ✅ **Búsqueda avanzada**: Filtros por fecha, monto, cliente, RUT
-- ✅ **Validaciones de formulario**: Previene errores de datos
-- ✅ **Error Boundary**: Manejo robusto de errores
-- ✅ **GitHub Actions**: Compilación automática multi-plataforma
-- ✅ **Mejor UX**: Mensajes descriptivos y feedback visual
+**2. Creación**
+- Crear clientes (con validación RUT)
+- Crear cotizaciones con PDF
+- Crear órdenes de compra
+- Crear órdenes de trabajo
 
-## 📝 Próximas Mejoras (v1.2.0)
+### Backup y Restauración
 
-- [ ] Sincronización automática con VPS
-- [ ] Detección de conflictos en datos
-- [ ] Auto-actualización de la aplicación
-- [ ] Backup automático programado
-- [ ] Modo oscuro
-- [ ] Notificaciones de escritorio
-- [ ] Sistema de permisos y roles
+#### Backup Completo (Recomendado)
+1. Clic en **"Exportar TODO"** en el sidebar
+2. Guarda el archivo `MEG-Sistema-COMPLETO-YYYY-MM-DD.json`
+3. Guarda en lugar seguro (USB, nube, etc.)
 
-## 🐛 Solución de Problemas
+#### Restaurar Backup Completo
+1. Clic en **"Restaurar TODO"** en el sidebar
+2. Selecciona el archivo de backup
+3. El sistema restaurará TODOS los apartados
+4. La aplicación se recargará automáticamente
 
-### Error: "Cannot find module 'electron'"
+#### Backup de Apartado Actual
+- **"Exportar"**: Exporta solo el apartado actual
+- **"Importar"**: Importa solo el apartado actual
+
+## 🛠️ Desarrollo
+
+### Requisitos
+- Node.js 20 LTS
+- npm 10+
+
+### Instalación de Desarrollo
 ```bash
+# Clonar repositorio
+git clone <repo-url>
+cd meg-sistema
+
+# Instalar dependencias
 npm install
+
+# Desarrollo
+npm run dev
+
+# Build para producción
+npm run build:win    # Windows
+npm run build:mac    # macOS
+npm run build:linux  # Linux
 ```
 
-### La aplicación no inicia
-Verificar que el puerto 3001 no esté en uso:
+### Estructura del Proyecto
+```
+meg-sistema/
+├── electron/           # Backend Electron (Express + SQLite)
+│   ├── main.js        # Servidor Express + IPC
+│   └── preload.js     # Bridge seguro
+├── src/               # Frontend React
+│   ├── pages/         # Páginas principales
+│   ├── components/    # Componentes reutilizables
+│   └── utils/         # Utilidades
+├── public/            # Assets estáticos
+└── build/             # Recursos de empaquetado
+```
+
+### Scripts Disponibles
 ```bash
-# Windows
-netstat -ano | findstr :3001
-
-# Mac/Linux
-lsof -ti:3001
+npm run dev              # Desarrollo con hot-reload
+npm run build            # Build frontend
+npm run build:win        # Empaquetar para Windows
+npm run build:mac        # Empaquetar para macOS (requiere Mac)
+npm run build:linux      # Empaquetar para Linux
+npm run postinstall      # Recompilar dependencias nativas
 ```
 
-### Errores de SQLite en Windows
-Si hay problemas compilando SQLite, instalar:
-```bash
-npm install --global windows-build-tools
+## 🔧 Tecnologías Utilizadas
+
+### Frontend
+- React 19
+- Vite 6
+- TailwindCSS 3.4
+- Radix UI
+- Recharts (gráficos)
+- pdf-lib (generación PDFs)
+- XLSX (exportación Excel)
+
+### Backend
+- Electron 34
+- Express 5
+- SQLite3 5.1
+- Node.js 20 LTS
+
+## 📊 Arquitectura
+
 ```
+┌─────────────────────────┐
+│   React Frontend        │ ← Usuario interactúa
+│   (localhost:5173)      │
+└───────────┬─────────────┘
+            │ HTTP
+┌───────────▼─────────────┐
+│ Express + SQLite        │ ← Backend local
+│   (puerto 3001)         │
+│   data.db (SQLite)      │
+└─────────────────────────┘
+```
+
+## 🐛 Resolución de Problemas
+
+### La aplicación no abre
+- Verifica que no haya otra instancia corriendo
+- Elimina `%APPDATA%\meg-sistema-electron` y vuelve a abrir
+
+### Datos no aparecen después de restaurar
+1. Cierra la aplicación completamente
+2. Abre de nuevo
+3. Inicia sesión con tus credenciales
+
+### Error al importar backup
+- Verifica que el archivo JSON sea válido
+- Asegúrate de que tenga la estructura correcta (`{version, timestamp, data}`)
+
+## 📝 Changelog
+
+### v2.0.0 (Actual)
+- ✅ Eliminado sistema VPS (100% local)
+- ✅ Backup automático diario
+- ✅ Nuevos botones "Exportar TODO" / "Restaurar TODO"
+- ✅ Mejoras en UI de backup
+- ✅ Limpieza de código (eliminadas 277 líneas)
+
+### v1.6.7
+- Última versión con sincronización VPS
 
 ## 📄 Licencia
 
-MIT - MEG Industrial
+Copyright © 2024-2025 MEG Industrial & MyOrganic
+Todos los derechos reservados.
 
-## 👥 Autores
+## 🤝 Soporte
 
-- MEG Industrial Team
-- Desarrollado con Claude Code
+Para reportar problemas o solicitar ayuda:
+- Crear issue en el repositorio
+- Contactar al equipo de desarrollo
+
+---
+
+**Desarrollado con ❤️ por el equipo de MEG Sistema**
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)

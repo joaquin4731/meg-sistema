@@ -5,18 +5,9 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const os = require('os');
-const https = require('https');
-const http = require('http');
 
 // Puerto para el servidor Express local
 const EXPRESS_PORT = 3001;
-
-// Configuración del VPS para sincronización
-const VPS_CONFIG = {
-  baseUrl: 'https://mayorganic.cl',
-  timeout: 10000, // 10 segundos
-  enabled: true
-};
 
 let mainWindow;
 let expressServer;
@@ -29,29 +20,42 @@ const localDbPath = path.join(userDataPath, 'data.db');
 console.log('User data path:', userDataPath);
 console.log('Local DB path:', localDbPath);
 
-// Función para sanitizar strings (eliminar caracteres de control problemáticos)
+// ✅ FIX: Sanitizar solo caracteres NULL problemáticos, NO sanitizar base64
 function sanitizeString(str) {
   if (typeof str !== 'string') return str;
-  // Reemplazar saltos de línea, retornos de carro y tabs con espacios
-  return str.replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Solo eliminar caracteres NULL (0x00) que causan problemas en SQLite
+  // MANTENER saltos de línea, tabs, etc. que son válidos en JSON
+  return str.replace(/\x00/g, '');
 }
 
+// Lista de claves que contienen datos base64 y NO deben sanitizarse
+const BASE64_KEYS = ['dataUrl', 'data', 'pdf', 'base64', 'image', 'file', 'attachment'];
+
 // Función para sanitizar recursivamente todos los strings en un objeto
-function sanitizeObject(obj) {
+// EXCEPTO campos base64 (PDFs, imágenes, etc.)
+function sanitizeObject(obj, parentKey = '') {
   if (obj === null || obj === undefined) return obj;
 
   if (typeof obj === 'string') {
+    // NO sanitizar si es un campo base64
+    if (BASE64_KEYS.some(key => parentKey.toLowerCase().includes(key.toLowerCase()))) {
+      return obj; // Retornar sin sanitizar
+    }
+    // NO sanitizar si parece un data URL (data:image/... o data:application/pdf...)
+    if (obj.startsWith('data:')) {
+      return obj; // Retornar sin sanitizar
+    }
     return sanitizeString(obj);
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => sanitizeObject(item));
+    return obj.map((item, idx) => sanitizeObject(item, `${parentKey}[${idx}]`));
   }
 
   if (typeof obj === 'object') {
     const sanitized = {};
     for (const key in obj) {
-      sanitized[key] = sanitizeObject(obj[key]);
+      sanitized[key] = sanitizeObject(obj[key], key);
     }
     return sanitized;
   }
@@ -60,10 +64,180 @@ function sanitizeObject(obj) {
 }
 
 /**
- * Limpieza automática: eliminar items con deleted=true y más de 30 días
- * Esto mantiene la base de datos limpia sin crecer indefinidamente
+ * Generar UID simple (compatibilidad con frontend)
+ */
+function generateUID() {
+  return Math.random().toString(36).substring(2, 9);
+}
+
+/**
+ * Obtener campo de ID según tipo de array
+ */
+function getIdField(arrayType) {
+  switch (arrayType) {
+    case 'cotizaciones':
+      return 'numero'; // ✅ Cotizaciones usan 'numero' como ID
+    case 'clientes':
+      return 'rut';
+    case 'ordenesCompra':
+      return 'numero';
+    case 'ordenesTrabajo':
+      return 'numero';
+    default:
+      return 'id';
+  }
+}
+
+/**
+ * Comparar si newItem es más reciente que existingItem
+ */
+function isNewer(newItem, existingItem) {
+  const newDate = new Date(newItem.updatedAt || newItem.fecha || 0);
+  const existingDate = new Date(existingItem.updatedAt || existingItem.fecha || 0);
+
+  if (!isNaN(newDate.getTime()) && !isNaN(existingDate.getTime())) {
+    return newDate >= existingDate;
+  }
+
+  return true; // Si no hay fechas, asumir que el nuevo es más reciente
+}
+
+/**
+ * Migrar facturaVenta (objeto antiguo) a facturasVenta (array nuevo)
+ * ✅ FIX: Actualiza updatedAt para que el merge detecte el cambio
+ */
+function migrateFacturasVenta(item) {
+  let wasMigrated = false;
+
+  // Si ya tiene facturasVenta (array), asegurarse de que tenga IDs
+  if (Array.isArray(item.facturasVenta)) {
+    item.facturasVenta = item.facturasVenta.map(f => ({
+      ...f,
+      id: f.id || generateUID(),
+      monto: Number(f.monto || 0)
+    }));
+    delete item.facturaVenta; // Eliminar campo antiguo si existe
+    // No marcar como migrado si ya tenía facturasVenta
+  } else if (item.facturaVenta && typeof item.facturaVenta === 'object') {
+    // Si tiene facturaVenta (objeto antiguo), convertir a array
+    const { codigo, rut, monto } = item.facturaVenta;
+
+    // Solo crear factura si tiene algún dato
+    if (codigo || rut || monto) {
+      item.facturasVenta = [{
+        id: generateUID(),
+        codigo: codigo || '',
+        rut: rut || '',
+        monto: Number(monto || 0)
+      }];
+    } else {
+      item.facturasVenta = [];
+    }
+
+    delete item.facturaVenta; // Eliminar campo antiguo
+    wasMigrated = true; // Se hizo migración
+  } else {
+    // No tiene ninguno, crear array vacío
+    item.facturasVenta = [];
+  }
+
+  // ✅ Actualizar timestamp si se hizo migración
+  if (wasMigrated) {
+    item.updatedAt = new Date().toISOString();
+    console.log(`[MIGRATION] Factura migrada, updatedAt actualizado: ${item.numero || item.id}`);
+  }
+
+  return item;
+}
+
+/**
+ * Backup Automático Diario
+ * Guarda un backup completo en formato JSON en la carpeta de documentos del usuario
+ * Mantiene los últimos 30 backups (1 mes)
+ */
+function performAutoBackup() {
+  if (!db) {
+    console.log('[AUTO-BACKUP] ⚠️ Base de datos no inicializada');
+    return;
+  }
+
+  console.log('[AUTO-BACKUP] 💾 Iniciando backup automático...');
+
+  const backupsDir = path.join(app.getPath('documents'), 'MEG-Sistema-Backups');
+
+  // Crear carpeta de backups si no existe
+  if (!fs.existsSync(backupsDir)) {
+    fs.mkdirSync(backupsDir, { recursive: true });
+    console.log(`[AUTO-BACKUP] 📁 Carpeta de backups creada: ${backupsDir}`);
+  }
+
+  // Obtener todos los datos
+  db.all('SELECT id, content FROM app_data', [], (err, rows) => {
+    if (err) {
+      console.error('[AUTO-BACKUP] ❌ Error al leer datos:', err);
+      return;
+    }
+
+    const backup = {
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      data: {}
+    };
+
+    rows.forEach(row => {
+      try {
+        backup.data[row.id] = JSON.parse(row.content);
+      } catch (e) {
+        console.error(`[AUTO-BACKUP] Error parseando ${row.id}:`, e);
+        backup.data[row.id] = { error: 'Parse error' };
+      }
+    });
+
+    // Nombre del archivo con fecha y hora
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const backupFile = path.join(backupsDir, `backup-${timestamp}.json`);
+
+    // Guardar backup
+    fs.writeFileSync(backupFile, JSON.stringify(backup, null, 2));
+    console.log(`[AUTO-BACKUP] ✅ Backup guardado: ${backupFile}`);
+
+    // Limpiar backups antiguos (mantener solo los últimos 30)
+    try {
+      const files = fs.readdirSync(backupsDir)
+        .filter(f => f.startsWith('backup-') && f.endsWith('.json'))
+        .map(f => ({
+          name: f,
+          path: path.join(backupsDir, f),
+          time: fs.statSync(path.join(backupsDir, f)).mtime.getTime()
+        }))
+        .sort((a, b) => b.time - a.time); // Más recientes primero
+
+      // Si hay más de 30 backups, eliminar los más antiguos
+      if (files.length > 30) {
+        const toDelete = files.slice(30);
+        toDelete.forEach(file => {
+          fs.unlinkSync(file.path);
+          console.log(`[AUTO-BACKUP] 🗑️  Backup antiguo eliminado: ${file.name}`);
+        });
+      }
+
+      console.log(`[AUTO-BACKUP] 📊 Total de backups: ${Math.min(files.length, 30)}`);
+    } catch (cleanupErr) {
+      console.error('[AUTO-BACKUP] Error limpiando backups antiguos:', cleanupErr);
+    }
+  });
+}
+
+/**
+ * Limpieza automática: DESACTIVADA
+ * (La función se mantiene por compatibilidad pero no hace nada)
  */
 function cleanupDeletedItems() {
+  console.log('[CLEANUP] ⚠️ Cleanup automático DESACTIVADO');
+  return;
+
+  // Código comentado para referencia (NO se ejecuta)
+  /*
   if (!db) return;
 
   console.log('[CLEANUP] Iniciando limpieza automática de items eliminados...');
@@ -134,58 +308,74 @@ function cleanupDeletedItems() {
       console.log('[CLEANUP] ✅ No hay items antiguos para limpiar');
     }
   });
+  */
 }
 
-// Función helper para hacer requests HTTP al VPS
-function httpRequest(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const protocol = urlObj.protocol === 'https:' ? https : http;
+/**
+ * Validar estructura de datos según apartado
+ * ✅ FIX: Agregado para consistencia con VPS
+ *
+ * @param {String} userKey - Clave del usuario (meg, myorganic, meg_creacion, myorganic_creacion)
+ * @param {Object} data - Datos a validar
+ * @returns {Object} - { valid: boolean, filteredData?: Object, error?: String }
+ */
+function validateDataStructure(userKey, data) {
+  const isMainApartment = userKey === 'meg' || userKey === 'myorganic';
+  const isCreacionApartment = userKey === 'meg_creacion' || userKey === 'myorganic_creacion';
 
-    const requestOptions = {
-      hostname: urlObj.hostname,
-      port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
-      path: urlObj.pathname + urlObj.search,
-      method: options.method || 'GET',
-      headers: options.headers || {},
-      timeout: VPS_CONFIG.timeout
-    };
-
-    const req = protocol.request(requestOptions, (res) => {
-      let data = '';
-
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
-
-      res.on('end', () => {
-        try {
-          const parsedData = JSON.parse(data);
-          resolve({ status: res.statusCode, data: parsedData });
-        } catch (e) {
-          resolve({ status: res.statusCode, data: data });
-        }
-      });
-    });
-
-    req.on('error', (error) => {
-      reject(error);
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Request timeout'));
-    });
-
-    if (options.body) {
-      // Sanitizar datos antes de enviar al VPS para evitar errores de JSON
-      const sanitizedBody = sanitizeObject(options.body);
-      req.write(JSON.stringify(sanitizedBody));
+  if (isMainApartment) {
+    // Apartado principal: SOLO debe tener cotizaciones
+    if (!data || typeof data !== 'object') {
+      return { valid: false, error: 'Datos inválidos' };
     }
 
-    req.end();
-  });
+    if (!Array.isArray(data.cotizaciones)) {
+      return { valid: false, error: 'Apartado principal debe tener array de cotizaciones' };
+    }
+
+    // Filtrar solo cotizaciones (ignorar claves extra)
+    const filteredData = {
+      cotizaciones: data.cotizaciones
+    };
+
+    // Advertir si tiene claves extra
+    const receivedKeys = Object.keys(data);
+    const extraKeys = receivedKeys.filter(k => k !== 'cotizaciones');
+    if (extraKeys.length > 0) {
+      console.warn(`⚠️ [${userKey}] Claves extra ignoradas: ${extraKeys.join(', ')}`);
+    }
+
+    return { valid: true, filteredData };
+  }
+
+  if (isCreacionApartment) {
+    // Apartado creación: debe tener los 4 arrays
+    const requiredKeys = ['clientes', 'cotizaciones', 'ordenesCompra', 'ordenesTrabajo'];
+
+    if (!data || typeof data !== 'object') {
+      return { valid: false, error: 'Datos inválidos' };
+    }
+
+    for (const key of requiredKeys) {
+      if (!Array.isArray(data[key])) {
+        return { valid: false, error: `Apartado creación debe tener array de ${key}` };
+      }
+    }
+
+    // Filtrar solo claves permitidas
+    const filteredData = {
+      clientes: data.clientes,
+      cotizaciones: data.cotizaciones,
+      ordenesCompra: data.ordenesCompra,
+      ordenesTrabajo: data.ordenesTrabajo
+    };
+
+    return { valid: true, filteredData };
+  }
+
+  return { valid: false, error: `userKey desconocido: ${userKey}` };
 }
+
 
 // Función para inicializar la base de datos local
 function initDatabase() {
@@ -213,6 +403,13 @@ function initDatabase() {
           return;
         }
 
+        // ✅ FIX: Crear índices para mejorar rendimiento
+        db.run(`CREATE INDEX IF NOT EXISTS idx_app_data_updated_at ON app_data(updated_at DESC)`, (err) => {
+          if (err) console.error('Error creating index on updated_at:', err);
+        });
+
+        console.log('✅ Database schema initialized with indexes');
+
         // Insertar datos iniciales si la tabla está vacía
         const initialData = {
           'meg': { cotizaciones: [] },
@@ -239,11 +436,16 @@ function initDatabase() {
             stmt.finalize(() => {
               console.log('Database initialized');
 
-              // Ejecutar limpieza automática al iniciar
-              setTimeout(() => cleanupDeletedItems(), 5000);
+              // Ejecutar backup automático al iniciar (después de 10 segundos)
+              setTimeout(() => performAutoBackup(), 10000);
 
-              // Programar limpieza automática cada 24 horas
-              setInterval(() => cleanupDeletedItems(), 24 * 60 * 60 * 1000);
+              // Programar backup automático cada 24 horas (a las 2:00 AM)
+              setInterval(() => {
+                const now = new Date();
+                if (now.getHours() === 2 && now.getMinutes() === 0) {
+                  performAutoBackup();
+                }
+              }, 60 * 1000); // Verificar cada minuto
 
               resolve();
             });
@@ -278,14 +480,29 @@ function startExpressServer() {
       res.json({ status: 'ok', mode: 'local' });
     });
 
-    // Endpoint de login (credenciales hardcodeadas, igual que antes)
+    // Endpoint de login (credenciales desde variables de entorno)
     expressApp.post('/api/login', (req, res) => {
       const { username, password } = req.body;
 
+      // ✅ FIX: Credenciales por defecto (deben coincidir con VPS)
+      const DEFAULT_MEG_PASSWORD = 'meg4731$';
+      const DEFAULT_MYORGANIC_PASSWORD = 'myorganic4731$';
+
       const credentials = {
-        'meg_2025': 'meg4731$',
-        'myorganic_2025': 'myorganic4731$'
+        'meg_2025': process.env.MEG_PASSWORD || DEFAULT_MEG_PASSWORD,
+        'myorganic_2025': process.env.MYORGANIC_PASSWORD || DEFAULT_MYORGANIC_PASSWORD
       };
+
+      // ⚠️ Advertir si se están usando credenciales por defecto
+      if (!process.env.MEG_PASSWORD || !process.env.MYORGANIC_PASSWORD) {
+        console.warn('═══════════════════════════════════════');
+        console.warn('⚠️  ADVERTENCIA DE SEGURIDAD');
+        console.warn('═══════════════════════════════════════');
+        console.warn('Usando credenciales por defecto.');
+        console.warn('Configure MEG_PASSWORD y MYORGANIC_PASSWORD');
+        console.warn('en las variables de entorno del sistema.');
+        console.warn('═══════════════════════════════════════');
+      }
 
       // Mapeo de username a userKey
       const usernameToKey = {
@@ -327,7 +544,18 @@ function startExpressServer() {
 
         try {
           const data = JSON.parse(row.content);
-          res.json(data);
+
+          // ✅ FIX: Validar y filtrar estructura antes de enviar
+          const validation = validateDataStructure(userKey, data);
+
+          if (!validation.valid) {
+            console.warn(`⚠️ [${userKey}] Estructura inválida en DB, retornando estructura correcta:`, validation.error);
+            // Retornar estructura vacía correcta
+            return res.json({ cotizaciones: [] });
+          }
+
+          // Enviar datos filtrados (solo las claves permitidas)
+          res.json(validation.filteredData);
         } catch (e) {
           console.error('Error parsing data:', e);
           res.status(500).json({ error: 'Data parsing error' });
@@ -368,7 +596,7 @@ function startExpressServer() {
         return res.status(400).json({ error: 'Missing key parameter' });
       }
 
-      // Agregar sufijo _creacion para consistencia con VPS
+      // Agregar sufijo _creacion
       const creacionKey = userKey + '_creacion';
 
       db.get('SELECT content FROM app_data WHERE id = ?', [creacionKey], (err, row) => {
@@ -383,7 +611,18 @@ function startExpressServer() {
 
         try {
           const data = JSON.parse(row.content);
-          res.json(data);
+
+          // ✅ FIX: Validar y filtrar estructura antes de enviar
+          const validation = validateDataStructure(creacionKey, data);
+
+          if (!validation.valid) {
+            console.warn(`⚠️ [${creacionKey}] Estructura inválida en DB, retornando estructura correcta:`, validation.error);
+            // Retornar estructura vacía correcta
+            return res.json({ clientes: [], cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] });
+          }
+
+          // Enviar datos filtrados (solo las claves permitidas)
+          res.json(validation.filteredData);
         } catch (e) {
           console.error('Error parsing creacion data:', e);
           res.status(500).json({ error: 'Data parsing error' });
@@ -399,12 +638,12 @@ function startExpressServer() {
         return res.status(400).json({ error: 'Missing key parameter' });
       }
 
-      // Agregar sufijo _creacion para consistencia con VPS
+      // Agregar sufijo _creacion
       const creacionKey = userKey + '_creacion';
 
       const content = JSON.stringify(data);
 
-      // Guardar en SQLite local (SyncManager se encargará del PUSH automáticamente)
+      // Guardar en SQLite local
       db.run(
         'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
         [creacionKey, content],
@@ -420,213 +659,89 @@ function startExpressServer() {
       );
     });
 
-    // Endpoints de sincronización con VPS
-    // GET /api/sync/pull - Descargar datos del VPS y actualizar SQLite local
-    // 🆕 SINCRONIZA AMBOS APARTADOS: principal (userKey) y creación (userKey_creacion)
-    expressApp.get('/api/sync/pull', async (req, res) => {
-      const userKey = req.query.userKey;
+    // ========================================
+    // 📦 ENDPOINTS DE BACKUP COMPLETO
+    // ========================================
 
-      if (!userKey) {
-        return res.status(400).json({ error: 'Missing userKey parameter' });
-      }
+    // GET /api/backup/export-all - Exportar TODOS los apartados en un solo JSON
+    expressApp.get('/api/backup/export-all', (req, res) => {
+      console.log('[BACKUP] 📦 Exportando backup completo...');
 
-      if (!VPS_CONFIG.enabled) {
-        return res.json({ success: false, message: 'Sync disabled' });
-      }
+      db.all('SELECT id, content FROM app_data', [], (err, rows) => {
+        if (err) {
+          console.error('[BACKUP] Error al exportar:', err);
+          return res.status(500).json({ error: 'Database error' });
+        }
 
-      try {
-        console.log(`[SYNC] 🔄 Pulling data from VPS for ${userKey} (AMBOS apartados)...`);
+        const backup = {
+          version: '1.0',
+          timestamp: new Date().toISOString(),
+          data: {}
+        };
 
-        // 1️⃣ PULL APARTADO PRINCIPAL (userKey)
-        const vpsUrl = `${VPS_CONFIG.baseUrl}/api/sync/pull?userKey=${encodeURIComponent(userKey)}`;
-        const response = await httpRequest(vpsUrl, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
+        rows.forEach(row => {
+          try {
+            backup.data[row.id] = JSON.parse(row.content);
+          } catch (e) {
+            console.error(`[BACKUP] Error parseando ${row.id}:`, e);
+            backup.data[row.id] = { error: 'Parse error' };
           }
         });
 
-        if (response.status !== 200) {
-          console.error(`[SYNC] VPS returned status ${response.status} for ${userKey}`);
-          return res.status(response.status).json({
-            success: false,
-            error: 'VPS sync failed',
-            vpsStatus: response.status
-          });
-        }
-
-        const vpsData = response.data;
-
-        // 2️⃣ PULL APARTADO DE CREACIÓN (userKey_creacion)
-        const creacionKey = userKey + '_creacion';
-        const vpsCreacionUrl = `${VPS_CONFIG.baseUrl}/api/sync/pull?userKey=${encodeURIComponent(creacionKey)}`;
-        const creacionResponse = await httpRequest(vpsCreacionUrl, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (creacionResponse.status !== 200) {
-          console.error(`[SYNC] VPS returned status ${creacionResponse.status} for ${creacionKey}`);
-          // No fallar aquí, continuar con apartado principal
-        }
-
-        const vpsCreacionData = creacionResponse.data;
-
-        // 3️⃣ Guardar AMBOS en SQLite local
-        const content = JSON.stringify(vpsData);
-        const creacionContent = JSON.stringify(vpsCreacionData);
-
-        // Guardar apartado principal
-        await new Promise((resolve, reject) => {
-          db.run(
-            'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
-            [userKey, content],
-            function(err) {
-              if (err) reject(err);
-              else {
-                console.log(`[SYNC] ✓ PULL completado para ${userKey}`);
-                resolve();
-              }
-            }
-          );
-        });
-
-        // Guardar apartado de creación
-        await new Promise((resolve, reject) => {
-          db.run(
-            'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
-            [creacionKey, creacionContent],
-            function(err) {
-              if (err) reject(err);
-              else {
-                console.log(`[SYNC] ✓ PULL completado para ${creacionKey}`);
-                resolve();
-              }
-            }
-          );
-        });
-
-        console.log(`[SYNC] ✅ Data pulled and saved locally for BOTH apartments`);
-        res.json({
-          success: true,
-          data: vpsData,
-          timestamp: new Date().toISOString()
-        });
-
-      } catch (error) {
-        console.error('[SYNC] Pull error:', error.message);
-        res.status(500).json({
-          success: false,
-          error: error.message,
-          offline: true
-        });
-      }
+        console.log(`[BACKUP] ✅ Backup completo generado (${rows.length} apartados)`);
+        res.json(backup);
+      });
     });
 
-    // POST /api/sync/push - Subir datos locales al VPS
-    // 🆕 SINCRONIZA AMBOS APARTADOS: principal (userKey) y creación (userKey_creacion)
-    expressApp.post('/api/sync/push', async (req, res) => {
-      const userKey = req.query.userKey;
-      const data = req.body;
+    // POST /api/backup/import-all - Importar TODOS los apartados desde JSON
+    expressApp.post('/api/backup/import-all', (req, res) => {
+      const backup = req.body;
 
-      if (!userKey) {
-        return res.status(400).json({ error: 'Missing userKey parameter' });
+      if (!backup || !backup.data) {
+        return res.status(400).json({ error: 'Invalid backup format' });
       }
 
-      if (!VPS_CONFIG.enabled) {
-        return res.json({ success: false, message: 'Sync disabled' });
-      }
+      console.log('[BACKUP] 📥 Importando backup completo...');
 
-      try {
-        console.log(`[SYNC] 🔄 Pushing data to VPS for ${userKey} (AMBOS apartados)...`);
+      let imported = 0;
+      let errors = 0;
 
-        // 1️⃣ PUSH APARTADO PRINCIPAL (userKey)
-        const vpsUrl = `${VPS_CONFIG.baseUrl}/api/sync/push?userKey=${encodeURIComponent(userKey)}`;
-        const response = await httpRequest(vpsUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: data
-        });
+      const entries = Object.entries(backup.data);
+      let completed = 0;
 
-        if (response.status !== 200) {
-          console.error(`[SYNC] VPS push returned status ${response.status} for ${userKey}`);
-          return res.status(response.status).json({
-            success: false,
-            error: 'VPS push failed',
-            vpsStatus: response.status
-          });
-        }
-
-        console.log(`[SYNC] ✓ PUSH completado para ${userKey}`);
-
-        // 2️⃣ PUSH APARTADO DE CREACIÓN (userKey_creacion)
-        const creacionKey = userKey + '_creacion';
-
-        // Obtener datos de creación desde SQLite local
-        const creacionData = await new Promise((resolve, reject) => {
-          db.get('SELECT content FROM app_data WHERE id = ?', [creacionKey], (err, row) => {
-            if (err) reject(err);
-            else if (!row) resolve(null);
-            else {
-              try {
-                resolve(JSON.parse(row.content));
-              } catch (e) {
-                reject(e);
-              }
-            }
-          });
-        });
-
-        if (creacionData) {
-          const vpsCreacionUrl = `${VPS_CONFIG.baseUrl}/api/sync/push?userKey=${encodeURIComponent(creacionKey)}`;
-          const creacionResponse = await httpRequest(vpsCreacionUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: creacionData
-          });
-
-          if (creacionResponse.status !== 200) {
-            console.error(`[SYNC] VPS push returned status ${creacionResponse.status} for ${creacionKey}`);
-            // No fallar aquí, el principal ya se subió
-          } else {
-            console.log(`[SYNC] ✓ PUSH completado para ${creacionKey}`);
-          }
-        } else {
-          console.log(`[SYNC] ⚠️ No hay datos locales para ${creacionKey}, omitiendo PUSH`);
-        }
-
-        // 3️⃣ Guardar apartado principal en SQLite local
+      entries.forEach(([key, data]) => {
         const content = JSON.stringify(data);
+
         db.run(
           'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
-          [userKey, content],
+          [key, content],
           function(err) {
             if (err) {
-              console.error('[SYNC] Error saving to local DB after push:', err);
-              // No fallar aquí, ya se guardó en VPS
+              console.error(`[BACKUP] Error importando ${key}:`, err);
+              errors++;
+            } else {
+              imported++;
             }
 
-            console.log(`[SYNC] ✅ Data pushed to VPS and saved locally for BOTH apartments`);
-            res.json({
-              success: true,
-              timestamp: new Date().toISOString()
-            });
+            completed++;
+
+            // Cuando terminen todas las operaciones
+            if (completed === entries.length) {
+              console.log(`[BACKUP] ✅ Importación completa: ${imported} exitosos, ${errors} errores`);
+              res.json({
+                success: true,
+                imported,
+                errors,
+                message: `Backup restaurado: ${imported} apartados`
+              });
+            }
           }
         );
+      });
 
-      } catch (error) {
-        console.error('[SYNC] Push error:', error.message);
-        res.status(500).json({
-          success: false,
-          error: error.message,
-          offline: true
-        });
+      // Si no hay datos que importar
+      if (entries.length === 0) {
+        res.json({ success: true, imported: 0, errors: 0, message: 'Backup vacío' });
       }
     });
 
@@ -690,12 +805,6 @@ ipcMain.handle('get-user-data-path', () => {
 
 ipcMain.handle('get-local-db-path', () => {
   return localDbPath;
-});
-
-ipcMain.handle('sync-with-remote', async (event, remoteUrl) => {
-  // TODO: Implementar lógica de sincronización con VPS
-  // Por ahora, retornar éxito simulado
-  return { success: true, message: 'Sincronización pendiente de implementar' };
 });
 
 ipcMain.handle('export-database', async () => {

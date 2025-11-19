@@ -1,6 +1,6 @@
 {
   "name": "meg-sistema-electron",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "MEG Industrial & MyOrganic - Sistema de Gestión (Aplicación de Escritorio)",
   "main": "electron/main.js",
   "author": "MEG Industrial",
@@ -33,13 +33,6 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "backend/package.json",
-      "backend/server.js",
-      "!backend/.env",
-      "!backend/.env.*",
-      "!backend/data.db",
-      "!backend/data.db-*",
-      "!backend/node_modules",
       "node_modules/**/*",
       "package.json"
     ],
@@ -79,21 +72,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "MEG Sistema"
-    },
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*",
-          "!.env",
-          "!.env.*",
-          "!data.db",
-          "!data.db-*",
-          "!node_modules/**"
-        ]
-      }
-    ]
+    }
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
