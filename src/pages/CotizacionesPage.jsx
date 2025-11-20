@@ -11,7 +11,12 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Upload, Trash2, FileText } from "lucide-react";
+import {
+  Plus, Upload, Trash2, FileText,
+  LayoutDashboard, FileBarChart, FilePlus,
+  Download, UploadCloud, LogOut, Sparkles,
+  Save, FolderOpen
+} from "lucide-react";
 
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, CartesianGrid,
@@ -27,30 +32,60 @@ import { saveAs } from 'file-saver';
 // API Base URL - Siempre localhost:3001 porque Express corre localmente en Electron
 const API_BASE = 'http://localhost:3001';
 
+// Configuración centralizada
+const CONFIG = {
+  MAX_FILE_SIZE_MB: 20,
+  ITEMS_POR_PAGINA: 10,
+  PDF_GENERATION_TIMEOUT_MS: 60000,
+};
+
 const CLP = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
 const fmtMoney = (n) => CLP.format(Math.round(n || 0));
-const uid = () => Math.random().toString(36).slice(2, 9);
+
+// ✅ FIX: uid() mejorado con timestamp + random + counter para evitar colisiones
+let uidCounter = 0;
+const uid = () => {
+  // Usar crypto API si está disponible (más seguro y único)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  // Fallback: timestamp + random + counter
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).slice(2, 9);
+  const counter = (uidCounter++).toString(36).padStart(3, '0');
+  return `${timestamp}-${random}-${counter}`;
+};
+
 const todayISO = () => new Date().toISOString().slice(0,10);
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
 // Helper para manejar cliente como objeto o string
 const getClienteNombre = (cotizacion) => typeof cotizacion.cliente === 'object' && cotizacion.cliente !== null ? (cotizacion.cliente.nombre || cotizacion.cliente.empresa || "—") : (cotizacion.cliente || "—");
 const getClienteRut = (cotizacion) => typeof cotizacion.cliente === 'object' && cotizacion.cliente !== null ? (cotizacion.cliente.rut || "—") : (cotizacion.rut || "—");
 const readFileAsDataURL = (file) => new Promise((resolve, reject) => {
-  const MAX_MB = 20;
-  if (file.size > MAX_MB * 1024 * 1024) {
-    reject(new Error(`El archivo supera ${MAX_MB}MB`));
+  if (file.size > CONFIG.MAX_FILE_SIZE_MB * 1024 * 1024) {
+    reject(new Error(`El archivo supera ${CONFIG.MAX_FILE_SIZE_MB}MB`));
     return;
   }
+
+  // ✅ FIX: Validar tipo de archivo
+  const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+  if (!validTypes.includes(file.type)) {
+    reject(new Error('Tipo de archivo no permitido. Solo PDF e imágenes.'));
+    return;
+  }
+
   const reader = new FileReader();
   reader.onload = () => resolve({
-    name: file.name, size: file.size, type: file.type,
-    dataUrl: String(reader.result), id: uid(), addedAt: new Date().toISOString()
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    dataUrl: String(reader.result),
+    id: uid(),
+    addedAt: new Date().toISOString()
   });
-  reader.onerror = reject;
+  reader.onerror = () => reject(new Error('Error al leer el archivo'));
   reader.readAsDataURL(file);
-
-
-
 });
 
 // Devuelve true si dateStr (YYYY-MM-DD) cae entre [desde, hasta] (inclusive).
@@ -78,9 +113,13 @@ const inRange = (dateStr, desde, hasta) => {
  *******************/
 const CLP_INT = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 });
 const onlyDigits = (s = "") => s.replace(/\D+/g, "");
+
+// ✅ FIX: Validar NaN para evitar propagación en cálculos
 const toInt = (s = "") => {
   const d = onlyDigits(s);
-  return d ? parseInt(d, 10) : 0;
+  if (!d) return 0;
+  const parsed = parseInt(d, 10);
+  return isNaN(parsed) ? 0 : parsed;
 };
 
 /** <MoneyInput/> muestra 1.500.000 pero entrega números (p.ej. 1500000) al padre */
@@ -186,35 +225,60 @@ function MoneyTooltip({ active, payload, label, title }) {
 function useStore(userKey, toast, isEditing) {
   const [data, setData] = useState({ cotizaciones: [] });
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Función de carga de datos (extraída para poder reutilizarla)
-  const loadData = useCallback(async () => {
-    try {
-      console.log('[CotizacionesPage] Cargando datos desde /api/data...');
-      const res = await fetch(`${API_BASE}/api/data?key=${userKey}`);
-      if (res.ok) {
-        const json = await res.json();
-        // Usar el endpoint /api/data para el apartado principal (registro manual)
-        // Filtrar cotizaciones eliminadas (soft delete)
-        const cotizaciones = Array.isArray(json?.cotizaciones) ? json.cotizaciones : [];
-        setData({
-          cotizaciones: cotizaciones.filter(x => !x.deleted)
-        });
-        console.log('[CotizacionesPage] Datos cargados:', json.cotizaciones?.length || 0, 'cotizaciones');
-      }
-    } catch (e) {
-      console.error('Error al cargar datos:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [userKey, API_BASE]);
-
-  // Carga inicial de datos
+  // ✅ FIX: Carga de datos con cancelación correcta de race conditions
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let cancelled = false;
+    const abortController = new AbortController();
 
+    const loadData = async () => {
+      try {
+        console.log('[CotizacionesPage] Cargando datos desde /api/data...');
+        const res = await fetch(`${API_BASE}/api/data?key=${userKey}`, {
+          signal: abortController.signal
+        });
+
+        if (!cancelled && res.ok) {
+          const json = await res.json();
+          const cotizaciones = Array.isArray(json?.cotizaciones) ? json.cotizaciones : [];
+          setData({
+            cotizaciones: cotizaciones.filter(x => !x.deleted)
+          });
+          console.log('[CotizacionesPage] Datos cargados:', json.cotizaciones?.length || 0, 'cotizaciones');
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('[CotizacionesPage] Carga de datos cancelada');
+        } else if (!cancelled) {
+          console.error('[CotizacionesPage] Error al cargar datos:', error);
+          toast?.error('Error al cargar datos');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadData();
+
+    // Cleanup: cancelar request al desmontar o cambiar userKey
+    return () => {
+      cancelled = true;
+      abortController.abort();
+    };
+  }, [userKey, toast]);
+
+  // ✅ FIX: saveData con loading state para prevenir guardados concurrentes
   const saveData = async (newData) => {
+    // Prevenir guardados múltiples
+    if (isSaving) {
+      console.log('[SAVE] ⚠️ Guardado ya en progreso, ignorando...');
+      return;
+    }
+
+    setIsSaving(true);
     try {
       console.log('[SAVE] 💾 Guardando datos...');
       console.log('[SAVE] 📊 Datos a guardar - Total:', newData.cotizaciones?.length);
@@ -238,7 +302,7 @@ function useStore(userKey, toast, isEditing) {
       const response = await fetch(`${API_BASE}/api/data?key=${userKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fullData), // ✅ Enviar estructura plana {cotizaciones: [...]}
+        body: JSON.stringify(fullData),
       });
 
       if (!response.ok) {
@@ -249,6 +313,8 @@ function useStore(userKey, toast, isEditing) {
       }
 
       console.log('[SAVE] ✅ Datos guardados en backend');
+      toast.success('Datos guardados correctamente');
+
       // Actualizar estado UI solo con cotizaciones visibles (filtrar eliminadas)
       const dataForUI = {
         ...newData,
@@ -259,9 +325,12 @@ function useStore(userKey, toast, isEditing) {
     } catch (e) {
       toast.error('Error al conectar con el servidor. Verifica que la aplicación esté activa.');
       console.error(e);
+    } finally {
+      setIsSaving(false);
     }
   };
-  return { data, setData: saveData, loading };
+
+  return { data, setData: saveData, loading, isSaving };
 }
 
 /********************
@@ -439,13 +508,14 @@ function MainApp({ user, company, onLogout }) {
   const [sel, setSel] = useState(null); // cotización seleccionada (para modal)
 
   // Hook con callback para detectar edición activa
-  const { data, setData } = useStore(user, toast, () => {
+  const { data, setData, loading, isSaving } = useStore(user.userKey, toast, () => {
     // Retorna true si hay modal de edición abierto
     return sel !== null;
   });
 
   const [tab, setTab] = useState("dashboard");
   const [usarNetoSinIVA, setUsarNetoSinIVA] = useState(true);
+  const [periodoFiltro, setPeriodoFiltro] = useState("ultimo-año"); // nuevo filtro de período
   const [filtros, setFiltros] = useState({
     numero: "",
     cliente: "",
@@ -455,9 +525,7 @@ function MainApp({ user, company, onLogout }) {
     hasta: "",
   });
 
-
   const [paginaActual, setPaginaActual] = useState(1);
-  const ITEMS_POR_PAGINA = 10; // Ajusta según prefieras (10, 15, 20, etc.)
 
 
 
@@ -501,7 +569,7 @@ function MainApp({ user, company, onLogout }) {
   }, [data?.cotizaciones, usarNetoSinIVA]);
 
   // Series mensualizadas (ingresos por fecha de cada factura; costos por fecha de OT)
-  const monthly = useMemo(()=>{
+  const monthlyAll = useMemo(()=>{
     const map = {};
     const cotizaciones = data?.cotizaciones || [];
     for (const c of cotizaciones) {
@@ -521,6 +589,38 @@ function MainApp({ user, company, onLogout }) {
     }
     return Object.values(map).sort((a,b)=> a.mes.localeCompare(b.mes));
   }, [data?.cotizaciones, usarNetoSinIVA]);
+
+  // Filtrar datos mensuales según período seleccionado
+  const monthly = useMemo(() => {
+    if (!monthlyAll.length) return [];
+
+    const hoy = new Date();
+    let fechaLimite;
+
+    switch(periodoFiltro) {
+      case "ultimo-semestre":
+        fechaLimite = new Date(hoy.getFullYear(), hoy.getMonth() - 6, 1);
+        break;
+      case "ultimo-año":
+        fechaLimite = new Date(hoy.getFullYear() - 1, hoy.getMonth(), 1);
+        break;
+      case "2022":
+        return monthlyAll.filter(m => m.mes.startsWith("2022"));
+      case "2023":
+        return monthlyAll.filter(m => m.mes.startsWith("2023"));
+      case "2024":
+        return monthlyAll.filter(m => m.mes.startsWith("2024"));
+      case "2025":
+        return monthlyAll.filter(m => m.mes.startsWith("2025"));
+      case "todo":
+        return monthlyAll;
+      default:
+        fechaLimite = new Date(hoy.getFullYear() - 1, hoy.getMonth(), 1);
+    }
+
+    const mesLimite = fechaLimite.toISOString().slice(0, 7);
+    return monthlyAll.filter(m => m.mes >= mesLimite);
+  }, [monthlyAll, periodoFiltro]);
 
 
   // Utilidad mensual + delta vs mes previo + media móvil 3m
@@ -624,10 +724,60 @@ const compData = useMemo(() => ([
       try {
         const backup = JSON.parse(String(reader.result));
 
-        if (!backup.data) {
-          toast.error("Formato de backup inválido");
+        // Validación exhaustiva de estructura de backup
+        if (!backup || typeof backup !== 'object') {
+          toast.error("Formato de backup inválido: no es un objeto JSON válido");
           return;
         }
+
+        if (!backup.data || typeof backup.data !== 'object') {
+          toast.error("Formato de backup inválido: falta el campo 'data'");
+          return;
+        }
+
+        // Validar que backup.data tenga las claves esperadas
+        const expectedKeys = ['meg', 'myorganic', 'meg_creacion', 'myorganic_creacion'];
+        const actualKeys = Object.keys(backup.data);
+
+        if (actualKeys.length === 0) {
+          toast.error("Backup vacío: no contiene datos");
+          return;
+        }
+
+        // Advertir si las claves no coinciden (pero permitir importar)
+        const hasUnexpectedKeys = actualKeys.some(key => !expectedKeys.includes(key));
+        if (hasUnexpectedKeys) {
+          console.warn('[IMPORT] ⚠️ Backup contiene claves inesperadas:', actualKeys);
+        }
+
+        // Validar estructura básica de cada apartado
+        for (const [key, value] of Object.entries(backup.data)) {
+          if (!value || typeof value !== 'object') {
+            toast.error(`Formato de backup inválido: ${key} no es un objeto`);
+            return;
+          }
+
+          // Verificar que apartados principales tengan array de cotizaciones
+          if (key === 'meg' || key === 'myorganic') {
+            if (!Array.isArray(value.cotizaciones)) {
+              toast.error(`Formato de backup inválido: ${key} debe tener array de cotizaciones`);
+              return;
+            }
+          }
+
+          // Verificar que apartados de creación tengan los 4 arrays
+          if (key === 'meg_creacion' || key === 'myorganic_creacion') {
+            const requiredArrays = ['clientes', 'cotizaciones', 'ordenesCompra', 'ordenesTrabajo'];
+            for (const arr of requiredArrays) {
+              if (!Array.isArray(value[arr])) {
+                toast.error(`Formato de backup inválido: ${key} debe tener array de ${arr}`);
+                return;
+              }
+            }
+          }
+        }
+
+        console.log('[IMPORT] ✅ Validación de backup exitosa, importando...');
 
         const res = await fetch(`${API_BASE}/api/backup/import-all`, {
           method: 'POST',
@@ -636,6 +786,8 @@ const compData = useMemo(() => ([
         });
 
         if (!res.ok) {
+          const errorText = await res.text();
+          console.error('[IMPORT] Error del servidor:', errorText);
           toast.error('Error al importar backup completo');
           return;
         }
@@ -645,9 +797,13 @@ const compData = useMemo(() => ([
 
         // Recargar página para reflejar cambios
         setTimeout(() => window.location.reload(), 1500);
-      } catch(e){
-        console.error('Error importando backup:', e);
-        toast.error("Error al importar backup completo");
+      } catch (error) {
+        console.error('[IMPORT] Error importando backup:', error);
+        if (error instanceof SyntaxError) {
+          toast.error("Archivo de backup corrupto (JSON inválido)");
+        } else {
+          toast.error("Error al importar backup completo");
+        }
       }
     };
     reader.readAsText(file);
@@ -657,7 +813,7 @@ const compData = useMemo(() => ([
 const duplicarCotizacion = async (c) => {
   try {
     // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
-    const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+    const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user.userKey)}`);
     if (!res.ok) {
       toast.error('Error al cargar datos del servidor');
       return;
@@ -758,88 +914,145 @@ const exportToExcel = () => {
   saveAs(blob, `cotizaciones-${todayISO()}.xlsx`);
 };
   return (
-<div className="min-h-screen w-full bg-slate-50 text-slate-900 flex">
-  {/* SIDEBAR IZQUIERDO */}
-  <aside className={`w-64 h-screen ${company === 'MyOrganic' ? 'bg-gradient-to-b from-blue-900 to-blue-800' : 'bg-gradient-to-b from-orange-800 to-orange-900'} text-white fixed left-0 top-0 flex flex-col justify-between p-6 shadow-xl z-30`}>
-    <div className="space-y-8">
-      {/* Logo grande */}
-      <div className="flex flex-col items-center justify-center mt-6 mb-4">
-        {company === 'MyOrganic' ? (
-          <img src="./logo-myorganic.png" alt="MyOrganic" className="h-20 mb-3" />
-        ) : (
-          <img src="./logo-meg.png" alt="MEG Industrial" className="h-20 mb-3" />
-        )}
-        <h1 className="text-xl font-bold tracking-tight text-center text-white/90">
+<div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 text-slate-900 flex">
+  {/* SIDEBAR IZQUIERDO - Diseño Moderno */}
+  <aside className={`w-72 h-screen ${
+    company === 'MyOrganic'
+      ? 'bg-gradient-to-br from-blue-600 via-blue-700 to-blue-900'
+      : 'bg-gradient-to-br from-orange-400 via-orange-500 to-orange-600'
+  } text-white fixed left-0 top-0 flex flex-col justify-between p-6 shadow-2xl z-30 animate-slide-in-left`}>
+
+    {/* Header con Logo */}
+    <div className="space-y-6">
+      <div className="flex flex-col items-center justify-center mt-4 mb-6 animate-fade-in-down">
+        <div className="relative group">
+          <div className={`absolute inset-0 ${
+            company === 'MyOrganic' ? 'bg-blue-400' : 'bg-orange-300'
+          } blur-xl opacity-50 group-hover:opacity-70 transition-opacity duration-300`}></div>
+          {company === 'MyOrganic' ? (
+            <img src="./logo-myorganic.png" alt="MyOrganic" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
+          ) : (
+            <img src="./logo-meg.png" alt="MEG Industrial" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
+          )}
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-center text-white drop-shadow-lg">
           {company}
         </h1>
+        <p className="text-xs text-white/70 font-medium mt-2">Sistema de Gestión</p>
       </div>
     </div>
 
-{/* Acciones en el footer del sidebar */}
-<div className="space-y-3">
-  <Button
-    variant="ghost"
-    onClick={() => navigate('/creacion')}
-    className="w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10"
-  >
-    <span>Creación</span>
-  </Button>
+    {/* Footer con Acciones */}
+    <div className="space-y-2 animate-fade-in-up">
+      {/* Navegación Principal */}
+      <Button
+        variant="ghost"
+        onClick={() => navigate('/creacion')}
+        className="w-full justify-start gap-3 text-white/90 hover:text-white hover:bg-white/20 transition-all duration-300 group backdrop-blur-sm rounded-xl py-6 font-medium"
+      >
+        <FilePlus className="w-5 h-5 group-hover:scale-110 transition-transform duration-300" />
+        <span className="group-hover:translate-x-1 transition-transform duration-300">Creación</span>
+      </Button>
 
-  {/* Separador */}
-  <div className="border-t border-white/20 my-2"></div>
+      {/* Separador Elegante */}
+      <div className="relative py-3">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-white/20"></div>
+        </div>
+        <div className="relative flex justify-center">
+          <span className="bg-white/10 px-3 py-1 text-[10px] font-bold text-white/70 rounded-full backdrop-blur-sm tracking-wider">
+            RESPALDO
+          </span>
+        </div>
+      </div>
 
-  {/* Backup del Sistema Completo */}
-  <div className="text-white/60 text-xs font-semibold px-2 py-1">RESPALDO DEL SISTEMA</div>
-  <Button
-    variant="ghost"
-    onClick={exportBackupCompleto}
-    className="w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10"
-  >
-    <span>💾 Exportar Backup</span>
-  </Button>
-  <label className="cursor-pointer inline-flex items-center w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10 p-2 rounded">
-    <span>📥 Restaurar Backup</span>
-    <input
-      type="file"
-      accept="application/json"
-      className="hidden"
-      onChange={(e) => { const f = e.target.files?.[0]; if (f) importBackupCompleto(f); }}
-    />
-  </label>
+      {/* Botones de Backup */}
+      <Button
+        variant="ghost"
+        onClick={exportBackupCompleto}
+        className="w-full justify-start gap-3 text-white/90 hover:text-white hover:bg-white/20 transition-all duration-300 group backdrop-blur-sm rounded-xl py-6 font-medium"
+      >
+        <Save className="w-5 h-5 group-hover:scale-110 group-hover:rotate-12 transition-all duration-300" />
+        <span className="group-hover:translate-x-1 transition-transform duration-300">Exportar Backup</span>
+      </Button>
 
-  {/* Separador */}
-  <div className="border-t border-white/20 my-2"></div>
+      <label className="cursor-pointer flex items-center w-full justify-start gap-3 text-white/90 hover:text-white hover:bg-white/20 transition-all duration-300 group backdrop-blur-sm rounded-xl p-3 font-medium">
+        <FolderOpen className="w-5 h-5 group-hover:scale-110 group-hover:-rotate-12 transition-all duration-300" />
+        <span className="group-hover:translate-x-1 transition-transform duration-300">Restaurar Backup</span>
+        <input
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) importBackupCompleto(f); }}
+        />
+      </label>
 
-  <Button
-    variant="ghost"
-    onClick={onLogout}
-    className="w-full justify-start gap-3 text-white/80 hover:text-white hover:bg-white/10"
-  >
-    <span>Cerrar sesión</span>
-  </Button>
+      {/* Separador */}
+      <div className="border-t border-white/20 my-3"></div>
 
-
-  
-</div>
+      {/* Cerrar Sesión */}
+      <Button
+        variant="ghost"
+        onClick={onLogout}
+        className="w-full justify-start gap-3 text-white/90 hover:text-white hover:bg-red-500/30 transition-all duration-300 group backdrop-blur-sm rounded-xl py-6 font-medium"
+      >
+        <LogOut className="w-5 h-5 group-hover:scale-110 group-hover:translate-x-1 transition-all duration-300" />
+        <span className="group-hover:translate-x-1 transition-transform duration-300">Cerrar sesión</span>
+      </Button>
+    </div>
   </aside>
 
   {/* MAIN CONTENT (derecho) */}
-  <main className="ml-64 w-full flex flex-col min-h-screen">
-    <div className="flex-1 max-w-7xl mx-auto px-6 py-8 w-full">
+  <main className="ml-72 w-full flex flex-col min-h-screen">
+    <div className="flex-1 max-w-7xl mx-auto px-8 py-8 w-full">
       <Tabs value={tab} onValueChange={setTab}>
-        {/* Pestañas en el header superior */}
-        <header className="sticky top-0 z-20 bg-white/95 border-b border-slate-200 shadow-sm mb-6">
-          <div className="max-w-7xl mx-auto px-6 py-4">
+        {/* Pestañas en el header superior - Diseño Moderno */}
+        <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-xl border-b border-slate-200/50 shadow-soft mb-8 animate-fade-in-down">
+          <div className="max-w-7xl mx-auto px-8 py-5">
             <div className="flex items-center justify-between gap-4">
-              <TabsList className="flex w-full md:w-auto gap-2 bg-slate-100/60 p-1 rounded-full border border-slate-200 shadow-sm">
-                <TabsTrigger value="dashboard" className="rounded-full px-4 py-2 text-sm data-[state=active]:bg-white data-[state=active]:shadow data-[state=active]:text-slate-900 bg-transparent text-slate-700">
-                  Dashboard
+              <TabsList className={`flex w-full md:w-auto gap-2 p-1.5 rounded-2xl border shadow-soft ${
+                company === 'MyOrganic'
+                  ? 'bg-gradient-to-r from-blue-50 to-blue-100/50 border-blue-200/50'
+                  : 'bg-gradient-to-r from-orange-50 to-orange-100/50 border-orange-200/50'
+              }`}>
+                <TabsTrigger
+                  value="dashboard"
+                  className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 ${
+                    company === 'MyOrganic'
+                      ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-blue-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-blue-500/30'
+                      : 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-600 data-[state=active]:to-orange-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-orange-500/30'
+                  } bg-transparent text-slate-700 hover:text-slate-900 data-[state=active]:scale-105`}
+                >
+                  <div className="flex items-center gap-2">
+                    <LayoutDashboard className="w-4 h-4" />
+                    <span>Dashboard</span>
+                  </div>
                 </TabsTrigger>
-                <TabsTrigger value="cotizaciones" className="rounded-full px-4 py-2 text-sm data-[state=active]:bg-white data-[state=active]:shadow data-[state=active]:text-slate-900 bg-transparent text-slate-700">
-                  Cotizaciones
+                <TabsTrigger
+                  value="cotizaciones"
+                  className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 ${
+                    company === 'MyOrganic'
+                      ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-blue-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-blue-500/30'
+                      : 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-600 data-[state=active]:to-orange-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-orange-500/30'
+                  } bg-transparent text-slate-700 hover:text-slate-900 data-[state=active]:scale-105`}
+                >
+                  <div className="flex items-center gap-2">
+                    <FileBarChart className="w-4 h-4" />
+                    <span>Cotizaciones</span>
+                  </div>
                 </TabsTrigger>
-                <TabsTrigger value="nueva" className="rounded-full px-4 py-2 text-sm data-[state=active]:bg-white data-[state=active]:shadow data-[state=active]:text-slate-900 bg-transparent text-slate-700">
-                  Nueva cotización
+                <TabsTrigger
+                  value="nueva"
+                  className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 ${
+                    company === 'MyOrganic'
+                      ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-blue-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-blue-500/30'
+                      : 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-600 data-[state=active]:to-orange-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-orange-500/30'
+                  } bg-transparent text-slate-700 hover:text-slate-900 data-[state=active]:scale-105`}
+                >
+                  <div className="flex items-center gap-2">
+                    <FilePlus className="w-4 h-4" />
+                    <span>Nueva cotización</span>
+                  </div>
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -848,17 +1061,41 @@ const exportToExcel = () => {
 
         {/* DASHBOARD */}
         <TabsContent value="dashboard" className="mt-0 space-y-6">
-          <div className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-white/80 border border-slate-200 shadow-sm w-fit">
-            <input
-              id="neto"
-              type="checkbox"
-              checked={usarNetoSinIVA}
-              onChange={(e) => setUsarNetoSinIVA(e.target.checked)}
-              className="h-4 w-4 accent-emerald-600"
-            />
-            <label htmlFor="neto" className="text-slate-700">
-              Calcular Ingresos sin IVA (recomendado para utilidad)
-            </label>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-white/80 border border-slate-200 shadow-sm">
+              <input
+                id="neto"
+                type="checkbox"
+                checked={usarNetoSinIVA}
+                onChange={(e) => setUsarNetoSinIVA(e.target.checked)}
+                className="h-4 w-4 accent-emerald-600"
+              />
+              <label htmlFor="neto" className="text-slate-700">
+                Calcular Ingresos sin IVA (recomendado para utilidad)
+              </label>
+            </div>
+
+            {/* Selector de Período */}
+            <div className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-white/80 border border-slate-200 shadow-sm">
+              <label className="text-slate-700 font-medium">Período:</label>
+              <select
+                value={periodoFiltro}
+                onChange={(e) => setPeriodoFiltro(e.target.value)}
+                className={`px-3 py-1.5 rounded-md border border-slate-300 focus:outline-none focus:ring-2 ${
+                  company === 'MyOrganic'
+                    ? 'focus:ring-blue-500 focus:border-blue-500'
+                    : 'focus:ring-orange-500 focus:border-orange-500'
+                } text-slate-700 bg-white`}
+              >
+                <option value="ultimo-semestre">Últimos 6 meses</option>
+                <option value="ultimo-año">Último año</option>
+                <option value="2022">Año 2022</option>
+                <option value="2023">Año 2023</option>
+                <option value="2024">Año 2024</option>
+                <option value="2025">Año 2025</option>
+                <option value="todo">Todo el período</option>
+              </select>
+            </div>
           </div>
 
           <div className="grid md:grid-cols-3 gap-4">
@@ -875,13 +1112,15 @@ const exportToExcel = () => {
             <KPICard title="Utilidad" value={fmtMoney(totales.utilidad)} highlight />
           </div>
 
-          {/* Fila 1 */}
-          <div className="grid lg:grid-cols-3 gap-4">
+          {/* Fila 1 - Gráficos Modernos */}
+          <div className="grid lg:grid-cols-3 gap-6">
             {/* Ingresos vs Costos por mes */}
-            <Card className="lg:col-span-2 bg-white border-0 shadow-sm">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">Ingresos vs Costos por mes</h3>
+            <Card className="lg:col-span-2 bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-slate-800">
+                    Ingresos vs Costos por mes
+                  </h3>
                   <div className="flex items-center gap-3 text-xs">
                     <span className="inline-flex items-center gap-1 text-slate-600">
                       <Dot color={COLORS.ingresos} /> Ingresos
@@ -950,6 +1189,16 @@ const exportToExcel = () => {
                         radius={[6, 6, 0, 0]}
                         animationDuration={800}
                       />
+                      {/* Brush para hacer zoom cuando hay muchos datos */}
+                      {monthly.length > 12 && (
+                        <Brush
+                          dataKey="mes"
+                          height={30}
+                          stroke={company === 'MyOrganic' ? '#3b82f6' : '#ff6600'}
+                          fill="#f8fafc"
+                          travellerWidth={10}
+                        />
+                      )}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -957,11 +1206,13 @@ const exportToExcel = () => {
             </Card>
 
             {/* Utilidad por cliente */}
-            <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">Utilidad por cliente</h3>
-                  <span className="text-xs text-slate-500">Top 10 + “Otros”</span>
+            <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-slate-800">
+                    Utilidad por cliente
+                  </h3>
+                  <span className="text-xs text-slate-500 font-medium">Top 10 + "Otros"</span>
                 </div>
                 {(() => {
                   const sorted = [...utilPorCliente].sort((a, b) => b.value - a.value);
@@ -1035,14 +1286,16 @@ const exportToExcel = () => {
             </Card>
           </div>
 
-          {/* Fila 2 */}
-          <div className="grid lg:grid-cols-3 gap-4">
+          {/* Fila 2 - Históricos */}
+          <div className="grid lg:grid-cols-3 gap-6">
             {/* Ingresos (histórico) */}
-            <Card className="lg:col-span-2 bg-white border-0 shadow-sm">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">Ingresos (histórico)</h3>
-                  <span className="text-xs text-slate-500">Desliza para ver meses anteriores</span>
+            <Card className="lg:col-span-2 bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-slate-800">
+                    Ingresos (histórico)
+                  </h3>
+                  <span className="text-xs text-slate-500 font-medium bg-slate-100 px-3 py-1 rounded-full">Desliza para ver meses anteriores</span>
                 </div>
                 <div className="h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1101,7 +1354,7 @@ const exportToExcel = () => {
             </Card>
 
             {/* Composición Ingresos vs Costos */}
-            <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+            <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
               <CardContent className="p-5">
                 <h3 className="font-semibold mb-3">Composición</h3>
                 <div className="h-[260px]">
@@ -1142,10 +1395,12 @@ const exportToExcel = () => {
           </div>
 
           {/* Comparativa de ganancias mensuales */}
-          <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold">Ganancias mensuales (utilidad)</h3>
+          <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-slate-800">
+                  Ganancias mensuales (utilidad)
+                </h3>
                 {monthlyUtilidad.length > 1 && (
                   (() => {
                     const last = monthlyUtilidad[monthlyUtilidad.length - 1];
@@ -1199,6 +1454,16 @@ const exportToExcel = () => {
                       radius={[6, 6, 0, 0]}
                       animationDuration={900}
                     />
+                    {/* Brush para hacer zoom cuando hay muchos datos */}
+                    {monthlyUtilidad.length > 12 && (
+                      <Brush
+                        dataKey="mes"
+                        height={30}
+                        stroke={company === 'MyOrganic' ? '#3b82f6' : '#ff6600'}
+                        fill="#f8fafc"
+                        travellerWidth={10}
+                      />
+                    )}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1216,7 +1481,7 @@ const exportToExcel = () => {
     </Button>
   </div>
 
-  <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+  <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
     <CardContent className="p-4 space-y-3">
       <h3 className="font-semibold">Filtros</h3>
       <FiltrosCotizaciones filtros={filtros} onChange={setFiltros} setPaginaActual={setPaginaActual} />
@@ -1229,14 +1494,14 @@ const exportToExcel = () => {
   filtros={filtros}
   paginaActual={paginaActual}
   setPaginaActual={setPaginaActual}
-  ITEMS_POR_PAGINA={ITEMS_POR_PAGINA}
+  ITEMS_POR_PAGINA={CONFIG.ITEMS_POR_PAGINA}
   sel={sel}
   setSel={setSel}
   onDuplicar={duplicarCotizacion}
   onSaveCotizacion={async (updated) => {
     try {
       // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
-      const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+      const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user.userKey)}`);
       if (!res.ok) {
         toast.error('Error al cargar datos del servidor');
         return;
@@ -1258,7 +1523,7 @@ const exportToExcel = () => {
       console.log('[DELETE] 🗑️ Eliminando cotización con ID:', id);
 
       // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
-      const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+      const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user.userKey)}`);
       if (!res.ok) {
         toast.error('Error al cargar datos del servidor');
         return;
@@ -1312,14 +1577,14 @@ const exportToExcel = () => {
 
         {/* NUEVA COTIZACIÓN */}
         <TabsContent value="nueva" className="mt-0">
-          <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+          <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
             <CardContent className="p-6 space-y-6">
               <h3 className="text-xl font-semibold">Crear Cotización</h3>
               <CotizacionForm
                 onSave={async (c) => {
                   try {
                     // ✅ Obtener TODAS las cotizaciones del backend (incluyendo eliminadas)
-                    const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user)}`);
+                    const res = await fetch(`${API_BASE}/api/data?key=${encodeURIComponent(user.userKey)}`);
                     if (!res.ok) {
                       toast.error('Error al cargar datos del servidor');
                       return;
@@ -1362,16 +1627,46 @@ const totOTCount = (data) => (data?.cotizaciones || []).filter(c=> (c?.ot?.items
 
 function KPICard({ title, value, subtitle, highlight }) {
   const accent = highlight ? COLORS.utilidad : COLORS.ingresos;
+  const bgGradient = highlight
+    ? 'from-emerald-50 via-emerald-50/50 to-white'
+    : 'from-blue-50 via-blue-50/30 to-white';
+  const glowColor = highlight
+    ? 'shadow-emerald-500/10'
+    : 'shadow-blue-500/10';
+
   return (
-    <Card className="border-0 shadow-sm bg-white/95 backdrop-blur supports-[backdrop-filter]:backdrop-blur ring-1 ring-slate-100">
-      <CardContent className="p-5 relative">
+    <Card className={`border-0 shadow-soft-lg bg-gradient-to-br ${bgGradient} backdrop-blur-sm overflow-hidden group hover:shadow-soft-lg transition-all duration-500 hover:scale-[1.02] animate-fade-in-up`}>
+      <CardContent className="p-6 relative">
+        {/* Barra de acento con gradiente */}
         <div
-          className="absolute left-0 top-0 h-full w-1.5 rounded-l-xl"
-          style={{ background: accent }}
+          className="absolute left-0 top-0 h-full w-1 rounded-l-xl shadow-lg transition-all duration-300 group-hover:w-1.5"
+          style={{
+            background: `linear-gradient(to bottom, ${accent}, ${accent}dd)`
+          }}
         />
-        <div className="text-[13px] text-slate-500">{title}</div>
-        <div className="text-3xl font-semibold tracking-tight mt-1">{value}</div>
-        {subtitle && <div className="text-xs text-slate-500 mt-1">{subtitle}</div>}
+
+        {/* Glow effect sutil en hover */}
+        <div
+          className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-2xl ${glowColor}`}
+          style={{ background: accent, opacity: 0.05 }}
+        />
+
+        {/* Contenido */}
+        <div className="relative z-10">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-semibold text-slate-600 uppercase tracking-wide">
+              {title}
+            </div>
+          </div>
+          <div className="text-4xl font-bold tracking-tight mt-2 bg-gradient-to-br from-slate-900 to-slate-700 bg-clip-text text-transparent">
+            {value}
+          </div>
+          {subtitle && (
+            <div className="text-xs text-slate-500 mt-3 font-medium">
+              {subtitle}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -1464,7 +1759,7 @@ function PDFManager({ label, files = [], onChange }){
 </div>
 
 
-      <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+      <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
 
         <CardContent className="p-0">
           <Table className="text-sm
@@ -1559,7 +1854,7 @@ function CotizacionForm({ onSave }){
   const { user } = useAuth();
 
   // Cargar datos del apartado de creación para autocompletado
-  const [datosCreacion, setDatosCreacion] = useState({ cotizaciones: [], ordenesCompra: [] });
+  const [datosCreacion, setDatosCreacion] = useState({ cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] });
   const [cargandoCreacion, setCargandoCreacion] = useState(true);
 
   // Estados de búsqueda para filtrar opciones
@@ -1639,12 +1934,13 @@ function CotizacionForm({ onSave }){
   useEffect(() => {
     const cargarDatosCreacion = async () => {
       try {
-        const res = await fetch(`http://localhost:3001/api/creacion?key=${encodeURIComponent(user)}`);
+        const res = await fetch(`http://localhost:3001/api/creacion?key=${encodeURIComponent(user?.userKey || '')}`);
         if (res.ok) {
           const json = await res.json();
           setDatosCreacion({
             cotizaciones: (json.cotizaciones || []).filter(x => !x.deleted),
-            ordenesCompra: (json.ordenesCompra || []).filter(x => !x.deleted)
+            ordenesCompra: (json.ordenesCompra || []).filter(x => !x.deleted),
+            ordenesTrabajo: (json.ordenesTrabajo || []).filter(x => !x.deleted)
           });
         }
       } catch (e) {
@@ -1672,11 +1968,22 @@ function CotizacionForm({ onSave }){
     if (cotSeleccionada.solicitud) setSolicitud(cotSeleccionada.solicitud);
     if (cotSeleccionada.comentarios) setComentarios(cotSeleccionada.comentarios);
     if (cotSeleccionada.fecha) setFecha(cotSeleccionada.fecha);
-    if (cotSeleccionada.monto != null) setMontoCot(Number(cotSeleccionada.monto) || 0);
+
+    // Calcular monto total de items si existe
+    let montoCalculado = 0;
+    if (cotSeleccionada.items && Array.isArray(cotSeleccionada.items)) {
+      montoCalculado = cotSeleccionada.items.reduce((sum, item) => {
+        return sum + (Number(item.cantidad || 0) * Number(item.precioUnitario || 0));
+      }, 0);
+    } else if (cotSeleccionada.monto != null) {
+      montoCalculado = Number(cotSeleccionada.monto);
+    }
+    setMontoCot(montoCalculado);
+
     if (cotSeleccionada.pdfs) setCotPDFs([...cotSeleccionada.pdfs]);
 
     setBusquedaCot(""); // Limpiar búsqueda
-    toast.success('Datos autocompletados desde cotización de creación');
+    toast.success(`Datos autocompletados (Monto: ${fmtMoney(montoCalculado)})`);
   };
 
   // Autocompletar desde OC del apartado de creación
@@ -1688,13 +1995,24 @@ function CotizacionForm({ onSave }){
     if (ocSeleccionada.clienteNombre) setOCClienteNombre(ocSeleccionada.clienteNombre);
     if (ocSeleccionada.clienteRUT) setOCClienteRUT(ocSeleccionada.clienteRUT);
     if (ocSeleccionada.codigo) setOCCodigo(ocSeleccionada.codigo);
-    if (ocSeleccionada.monto != null) setOCMonto(Number(ocSeleccionada.monto) || 0);
     if (ocSeleccionada.descripcion) setOCDescripcion(ocSeleccionada.descripcion);
     if (ocSeleccionada.comentarios) setOCComentarios(ocSeleccionada.comentarios);
+
+    // Calcular monto total de items si existe
+    let montoCalculado = 0;
+    if (ocSeleccionada.items && Array.isArray(ocSeleccionada.items)) {
+      montoCalculado = ocSeleccionada.items.reduce((sum, item) => {
+        return sum + (Number(item.cantidad || 0) * Number(item.precioUnitario || 0));
+      }, 0);
+    } else if (ocSeleccionada.monto != null) {
+      montoCalculado = Number(ocSeleccionada.monto);
+    }
+    setOCMonto(montoCalculado);
+
     if (ocSeleccionada.pdfs) setOCPDFs([...ocSeleccionada.pdfs]);
 
     setBusquedaOC(""); // Limpiar búsqueda
-    toast.success('Datos de OC autocompletados desde creación');
+    toast.success(`Datos de OC autocompletados (Monto: ${fmtMoney(montoCalculado)})`);
   };
 
   const save = () => {
@@ -1909,7 +2227,7 @@ const c = {
           <Field label="Fecha OT"><Input type="date" value={otFecha} onChange={e=>setOTFecha(e.target.value)} /></Field>
         </div>
 
-        <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+        <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
 
           <CardContent className="p-0">
             <Table className="text-sm
@@ -2058,7 +2376,7 @@ const c = {
           <Button variant="secondary" className="gap-2" onClick={addFactura}><Plus size={16}/> Agregar Factura</Button>
         </div>
 
-        <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+        <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
 
           <CardContent className="p-0">
             <Table className="text-sm
@@ -2194,7 +2512,7 @@ function PDFListViewer({ label, files = [] }){
     <div className="space-y-2">
       <div className="text-sm font-medium text-slate-700">{label}</div>
 
-      <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+      <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
 
         <CardContent className="p-0">
           <Table className="text-sm
@@ -2419,7 +2737,7 @@ function DetalleCotizacionVista({ cot, usarNetoSinIVA }){
           <Field label="Fecha OT"><div>{cot?.ot?.fecha || "—"}</div></Field>
         </div>
 
-        <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+        <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
 
           <CardContent className="p-0">
             <Table className="text-sm
@@ -2500,7 +2818,7 @@ function DetalleCotizacionVista({ cot, usarNetoSinIVA }){
 {/* Facturas múltiples (VISTA) */}
 <div>
   <h4 className="font-semibold mb-2">Facturas de Venta</h4>
-  <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+  <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
     <CardContent className="p-0">
       <Table className="text-sm
         [&_thead_th]:text-slate-600 [&_thead_th]:font-semibold [&_thead_th]:bg-slate-50/80
@@ -2643,13 +2961,14 @@ const rowsAll = (cotizaciones || [])
   });
 
 // Calcular paginación
-const totalPaginas = Math.ceil(rowsAll.length / ITEMS_POR_PAGINA);
-const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
-const fin = inicio + ITEMS_POR_PAGINA;
+const itemsPorPag = ITEMS_POR_PAGINA || CONFIG.ITEMS_POR_PAGINA;
+const totalPaginas = Math.ceil(rowsAll.length / itemsPorPag);
+const inicio = (paginaActual - 1) * itemsPorPag;
+const fin = inicio + itemsPorPag;
 const rowsPaginadas = rowsAll.slice(inicio, fin);
 return (
     <>
-      <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+      <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
         <CardContent className="p-4 space-y-3">
           <Table className="text-sm
     [&_thead_th]:text-slate-600 [&_thead_th]:font-semibold [&_thead_th]:bg-slate-50/80
@@ -2720,7 +3039,7 @@ return (
 
       {/* Controles de paginación */}
       {totalPaginas > 1 && (
-        <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur mt-4">
+        <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in mt-4">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-600">
@@ -2817,12 +3136,13 @@ function DetalleCotizacionEditable({ initial, usarNetoSinIVA, onSave, onDelete }
   useEffect(() => {
     const cargarDatosCreacion = async () => {
       try {
-        const res = await fetch(`http://localhost:3001/api/creacion?key=${encodeURIComponent(user)}`);
+        const res = await fetch(`http://localhost:3001/api/creacion?key=${encodeURIComponent(user?.userKey || '')}`);
         if (res.ok) {
           const json = await res.json();
           setDatosCreacion({
             cotizaciones: (json.cotizaciones || []).filter(x => !x.deleted),
-            ordenesCompra: (json.ordenesCompra || []).filter(x => !x.deleted)
+            ordenesCompra: (json.ordenesCompra || []).filter(x => !x.deleted),
+            ordenesTrabajo: (json.ordenesTrabajo || []).filter(x => !x.deleted)
           });
         }
       } catch (e) {
@@ -3185,7 +3505,7 @@ const addFactura = () => setFacturas([
         </div>
 
 {/* Tabla de Servicios OT (EDICIÓN) */}
-<Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+<Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
   <CardContent className="p-0">
     <Table className="text-sm
       [&_thead_th]:text-slate-600 [&_thead_th]:font-semibold [&_thead_th]:bg-slate-50/80
@@ -3316,7 +3636,7 @@ const addFactura = () => setFacturas([
           <Button variant="secondary" className="gap-2" onClick={addFactura}><Plus size={16}/> Agregar Factura</Button>
         </div>
 
-        <Card className="bg-white/95 border-0 shadow-sm ring-1 ring-slate-100 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+        <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
 
           <CardContent className="p-0">
             <Table className="text-sm

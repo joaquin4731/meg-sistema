@@ -12,7 +12,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Trash2, Pencil } from "lucide-react";
+import {
+  Trash2, Pencil, Users, FileText, ShoppingCart, Wrench,
+  Plus, Save, FolderOpen, Search, Download, LogOut,
+  Sparkles, LayoutDashboard
+} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
@@ -69,9 +73,19 @@ function deleteCondicionesPlantilla(nombre) {
 }
 
 /* ===========================
+   Configuración centralizada
+   =========================== */
+const CONFIG = {
+  MAX_FILE_SIZE_MB: 20,
+  ITEMS_POR_PAGINA: 9,
+  PDF_TIMEOUT_MS: 60000,
+  MAX_ITEMS_IN_PDF: 500,
+};
+
+/* ===========================
    Store de persistencia (API)
    =========================== */
-function useCreacionStore(userKey, isEditing) {
+function useCreacionStore(userKey, isEditing, toast) {
   // Siempre usar localhost:3001 porque Express corre localmente en Electron
   const API_BASE = 'http://localhost:3001';
 
@@ -79,101 +93,80 @@ function useCreacionStore(userKey, isEditing) {
     clientes: [],
     cotizaciones: [],
     ordenesCompra: [],
-    ordenesTrabajo: [] // ✅ NUEVO
+    ordenesTrabajo: []
   });
   const [loading, setLoading] = useState(true);
-  const [isFirstSyncLoading, setIsFirstSyncLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Función de carga de datos (extraída para poder reutilizarla)
-  const loadData = useCallback(async () => {
-    if (!userKey) return;
-    try {
-      console.log('[CreacionPage] Cargando datos...');
-      const res = await fetch(`${API_BASE}/api/creacion?key=${encodeURIComponent(userKey)}`);
-      if (!res.ok) {
-        const txt = await res.text();
-        console.error('GET /api/creacion no OK:', res.status, txt);
-        return;
-      }
-      const json = await res.json();
-      // ✅ Cargar TODOS los items (incluyendo eliminados) para evitar pérdida de datos
-      // El filtrado se hará en la UI al mostrar
-      setDataState({
-        clientes: json.clientes || [],
-        cotizaciones: json.cotizaciones || [],
-        ordenesCompra: json.ordenesCompra || [],
-        ordenesTrabajo: json.ordenesTrabajo || []
-      });
-      console.log('[CreacionPage] Datos cargados (incluyendo eliminados)');
-    } catch (e) {
-      console.error('Error al cargar datos de creación:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [userKey, API_BASE]);
-
-  // Carga inicial de datos
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Escuchar eventos de sincronización y recargar datos cuando termine
-  // IMPORTANTE: Solo recargar si NO hay edición activa (callback isEditing)
+  // ✅ FIX: Carga de datos con cancelación correcta de race conditions
   useEffect(() => {
     if (!userKey) return;
 
-    try {
-      const syncManager = getSyncManager(userKey);
+    let cancelled = false;
+    const abortController = new AbortController();
 
-      const unsubscribe = syncManager.subscribe((event) => {
-        if (event.type === 'sync-start') {
-          // 🆕 Si es la primera sincronización, mostrar loading especial
-          const status = syncManager.getStatus();
-          if (!status.lastSyncTime) {
-            console.log('[CreacionPage] Primera sincronización iniciando...');
-            setIsFirstSyncLoading(true);
-          }
-        }
+    const loadData = async () => {
+      try {
+        console.log('[CreacionPage] Cargando datos...');
+        const res = await fetch(`${API_BASE}/api/creacion?key=${encodeURIComponent(userKey)}`, {
+          signal: abortController.signal
+        });
 
-        if (event.type === 'sync-success') {
-          // 🆕 Si era primera sincronización, ocultar loading
-          if (event.isFirstSync) {
-            console.log('[CreacionPage] Primera sincronización completada');
-            setIsFirstSyncLoading(false);
-          }
-
-          // Verificar si hay edición activa usando el callback
-          if (typeof isEditing === 'function' && isEditing()) {
-            console.log('[CreacionPage] Sincronización exitosa pero hay edición activa, omitiendo recarga');
+        if (!cancelled) {
+          if (!res.ok) {
+            const txt = await res.text();
+            console.error('[CreacionPage] GET /api/creacion no OK:', res.status, txt);
+            toast?.error('Error al cargar datos');
             return;
           }
 
-          console.log('[CreacionPage] Sincronización exitosa, recargando datos...');
-          loadData();
+          const json = await res.json();
+          setDataState({
+            clientes: json.clientes || [],
+            cotizaciones: json.cotizaciones || [],
+            ordenesCompra: json.ordenesCompra || [],
+            ordenesTrabajo: json.ordenesTrabajo || []
+          });
+          console.log('[CreacionPage] Datos cargados correctamente');
         }
-
-        if (event.type === 'sync-error') {
-          // Ocultar loading en caso de error
-          setIsFirstSyncLoading(false);
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('[CreacionPage] Carga de datos cancelada');
+        } else if (!cancelled) {
+          console.error('[CreacionPage] Error al cargar datos:', error);
+          toast?.error('Error al cargar datos');
         }
-      });
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
 
-      return () => {
-        unsubscribe();
-      };
-    } catch (error) {
-      console.error('[CreacionPage] Error al suscribirse a sync:', error);
-    }
-  }, [userKey, loadData, isEditing]);
+    loadData();
 
+    // Cleanup: cancelar request al desmontar o cambiar userKey
+    return () => {
+      cancelled = true;
+      abortController.abort();
+    };
+  }, [userKey, toast]);
+
+  // ✅ FIX: saveData con loading state para prevenir guardados concurrentes
   const saveData = useCallback(async (newData) => {
     if (!userKey) {
       console.error('❌ userKey es null/undefined');
       return;
     }
-    
+
     if (!newData) {
       console.error('❌ newData es null/undefined');
+      return;
+    }
+
+    // Prevenir guardados múltiples
+    if (isSaving) {
+      console.log('[SAVE] ⚠️ Guardado ya en progreso, ignorando...');
       return;
     }
 
@@ -185,15 +178,13 @@ function useCreacionStore(userKey, isEditing) {
       return;
     }
 
+    setIsSaving(true);
     console.log('═══════════════════════════════════════');
-    console.log('📤 FRONTEND - Preparando envío');
+    console.log('📤 FRONTEND - Guardando datos...');
     console.log('📤 userKey:', userKey);
-    console.log('📤 newData:', newData);
     console.log('═══════════════════════════════════════');
 
     try {
-      // ✅ newData ya incluye TODOS los items (eliminados y no eliminados)
-      // porque ahora se mantienen en el estado desde loadData
       const url = `${API_BASE}/api/creacion?key=${encodeURIComponent(userKey)}`;
 
       const response = await fetch(url, {
@@ -203,17 +194,16 @@ function useCreacionStore(userKey, isEditing) {
         },
         body: JSON.stringify(newData)
       });
-      
-      console.log('📥 Status recibido:', response.status);
-      
+
       if (!response.ok) {
         const txt = await response.text();
         console.error('❌ Respuesta no OK:', response.status, txt);
         throw new Error(`Error ${response.status}: ${txt}`);
       }
-      
+
       const result = await response.json();
-      console.log('✅ Respuesta exitosa:', result);
+      console.log('✅ Datos guardados correctamente');
+      toast.success('Datos guardados correctamente');
 
       // Actualizar estado UI solo con items visibles (filtrar eliminados)
       const dataForUI = {
@@ -223,21 +213,36 @@ function useCreacionStore(userKey, isEditing) {
         ordenesTrabajo: (newData.ordenesTrabajo || []).filter(x => !x.deleted)
       };
       setDataState(dataForUI);
-      console.log('✅ Estado local actualizado');
-      
-    } catch (e) {
-      console.error('❌ Error completo:', e);
-      toast.error(`Error al guardar: ${e.message}`);
-    }
-  }, [userKey, API_BASE]);
 
-  return { data, setData: saveData, loading, isFirstSyncLoading };
+    } catch (e) {
+      console.error('❌ Error al guardar:', e);
+      toast.error(`Error al guardar: ${e.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [userKey, API_BASE, toast, isSaving]);
+
+  return { data, setData: saveData, loading, isSaving };
 }
 
 /* ===========================
    Utilidades
    =========================== */
-const uid = () => Math.random().toString(36).slice(2, 9);
+// ✅ FIX: uid() mejorado con timestamp + random + counter para evitar colisiones
+let uidCounter = 0;
+const uid = () => {
+  // Usar crypto API si está disponible (más seguro y único)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  // Fallback: timestamp + random + counter
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).slice(2, 9);
+  const counter = (uidCounter++).toString(36).padStart(3, '0');
+  return `${timestamp}-${random}-${counter}`;
+};
+
 const todayISO = () => new Date().toISOString().slice(0,10);
 const CLP = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" });
 const fmtMoney = (n) => CLP.format(Math.round(Number(n || 0)));
@@ -282,16 +287,16 @@ export default function CreacionPage() {
   const [editRef, setEditRef] = useState(null);
 
   // Hook con callback para detectar edición activa
-  const { data, setData, loading, isFirstSyncLoading } = useCreacionStore(userKey, () => {
+  const { data, setData, loading } = useCreacionStore(userKey, () => {
     // Retorna true si hay alguna edición activa
     return clienteEnEdicion !== null || editRef !== null;
-  });
+  }, toast);
 
-  // ✅ Filtrar items eliminados solo para mostrar en la UI
-  const clientes = (data.clientes || []).filter(x => !x.deleted);
-  const cotizaciones = (data.cotizaciones || []).filter(x => !x.deleted);
-  const ordenesCompra = (data.ordenesCompra || []).filter(x => !x.deleted);
-  const ordenesTrabajo = (data.ordenesTrabajo || []).filter(x => !x.deleted);
+  // ✅ Filtrar items eliminados solo para mostrar en la UI (memoizado para performance)
+  const clientes = useMemo(() => (data.clientes || []).filter(x => !x.deleted), [data.clientes]);
+  const cotizaciones = useMemo(() => (data.cotizaciones || []).filter(x => !x.deleted), [data.cotizaciones]);
+  const ordenesCompra = useMemo(() => (data.ordenesCompra || []).filter(x => !x.deleted), [data.ordenesCompra]);
+  const ordenesTrabajo = useMemo(() => (data.ordenesTrabajo || []).filter(x => !x.deleted), [data.ordenesTrabajo]);
 
   // Estados de filtros
   const [filtrosCot, setFiltrosCot] = useState({
@@ -313,6 +318,55 @@ export default function CreacionPage() {
   const [paginaOT, setPaginaOT] = useState(1); // ✅ NUEVO
   const ITEMS_POR_PAGINA = 9;
 
+  // ✅ Funciones de filtrado
+  const filtrarDocumentos = useCallback((documentos, filtros) => {
+    return documentos.filter(doc => {
+      const clienteNombre = doc.cliente?.nombre?.toLowerCase() || "";
+      const clienteEmpresa = doc.cliente?.empresa?.toLowerCase() || "";
+      const clienteRUT = doc.cliente?.rut?.toLowerCase() || "";
+      const docFecha = doc.fecha || "";
+
+      if (filtros.cliente) {
+        const buscar = filtros.cliente.toLowerCase();
+        if (!clienteNombre.includes(buscar) && !clienteEmpresa.includes(buscar)) {
+          return false;
+        }
+      }
+
+      if (filtros.rut) {
+        if (!clienteRUT.includes(filtros.rut.toLowerCase())) {
+          return false;
+        }
+      }
+
+      if (filtros.desde && docFecha < filtros.desde) {
+        return false;
+      }
+
+      if (filtros.hasta && docFecha > filtros.hasta) {
+        return false;
+      }
+
+      return true;
+    });
+  }, []);
+
+  // ✅ Documentos filtrados memoizados para mejor performance
+  const cotizacionesFiltradas = useMemo(() =>
+    filtrarDocumentos(cotizaciones, filtrosCot),
+    [cotizaciones, filtrosCot, filtrarDocumentos]
+  );
+
+  const ordenesCompraFiltradas = useMemo(() =>
+    filtrarDocumentos(ordenesCompra, filtrosOC),
+    [ordenesCompra, filtrosOC, filtrarDocumentos]
+  );
+
+  const ordenesTrabajoFiltradas = useMemo(() =>
+    filtrarDocumentos(ordenesTrabajo, filtrosOT),
+    [ordenesTrabajo, filtrosOT, filtrarDocumentos]
+  );
+
   const documentoActual = useMemo(() => {
     if (!editRef) return null;
     let list = [];
@@ -326,6 +380,12 @@ export default function CreacionPage() {
   const agregarCliente = () => {
     if (!nuevoCliente.nombre || !nuevoCliente.empresa || !nuevoCliente.rut) {
       toast.error("Ingresa nombre, empresa y RUT");
+      return;
+    }
+
+    // Validar formato de RUT
+    if (!validateRUT(nuevoCliente.rut)) {
+      toast.error("RUT inválido. Verifica el formato (ej: 12.345.678-9)");
       return;
     }
 
@@ -353,12 +413,12 @@ export default function CreacionPage() {
   };
 
   const eliminarCliente = (id) => {
-    // Soft delete: marcar como deleted y eliminar PDFs
+    // Soft delete: marcar como deleted (mantener PDFs para recuperación)
     setData({
       ...data,
       clientes: data.clientes.map(c =>
         c.id === id
-          ? { ...c, deleted: true, updatedAt: new Date().toISOString(), pdfs: [] }
+          ? { ...c, deleted: true, updatedAt: new Date().toISOString() }
           : c
       )
     });
@@ -484,32 +544,32 @@ export default function CreacionPage() {
     }
 
     if (tipo === "cotizacion") {
-      // Soft delete: marcar como deleted y eliminar PDFs
+      // Soft delete: marcar como deleted (mantener PDFs para recuperación)
       setData({
         ...data,
         cotizaciones: data.cotizaciones.map(c =>
           c.id === id
-            ? { ...c, deleted: true, updatedAt: new Date().toISOString(), pdfs: [], items: (c.items || []).map(i => ({ ...i, pdfs: [] })) }
+            ? { ...c, deleted: true, updatedAt: new Date().toISOString() }
             : c
         )
       });
     } else if (tipo === "orden_compra") {
-      // Soft delete: marcar como deleted y eliminar PDFs
+      // Soft delete: marcar como deleted (mantener PDFs para recuperación)
       setData({
         ...data,
         ordenesCompra: data.ordenesCompra.map(oc =>
           oc.id === id
-            ? { ...oc, deleted: true, updatedAt: new Date().toISOString(), pdfs: [], items: (oc.items || []).map(i => ({ ...i, pdfs: [] })) }
+            ? { ...oc, deleted: true, updatedAt: new Date().toISOString() }
             : oc
         )
       });
     } else if (tipo === "orden_trabajo") {
-      // Soft delete: marcar como deleted y eliminar PDFs
+      // Soft delete: marcar como deleted (mantener PDFs para recuperación)
       setData({
         ...data,
         ordenesTrabajo: data.ordenesTrabajo.map(ot =>
           ot.id === id
-            ? { ...ot, deleted: true, updatedAt: new Date().toISOString(), pdfs: [], items: (ot.items || []).map(i => ({ ...i, pdfs: [] })) }
+            ? { ...ot, deleted: true, updatedAt: new Date().toISOString() }
             : ot
         )
       });
@@ -1317,9 +1377,9 @@ export default function CreacionPage() {
   /* ===== Exportar PDF (descargar) ===== */
   const exportarPDF = async (documento) => {
     try {
-      // Timeout de seguridad: 30 segundos
+      // Timeout de seguridad: 60 segundos
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout: La generación del PDF tomó demasiado tiempo (>30s)')), 30000)
+        setTimeout(() => reject(new Error('Timeout: La generación del PDF tomó demasiado tiempo (>60s)')), 60000)
       );
 
       const pdfPromise = generarPDF(documento);
@@ -1338,9 +1398,9 @@ export default function CreacionPage() {
 
   const abrirVistaPreviaPDF = async (documento) => {
     try {
-      // Timeout de seguridad: 30 segundos
+      // Timeout de seguridad: 60 segundos
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout: La generación del PDF tomó demasiado tiempo (>30s)')), 30000)
+        setTimeout(() => reject(new Error('Timeout: La generación del PDF tomó demasiado tiempo (>60s)')), 60000)
       );
 
       const pdfPromise = generarPDF(documento);
@@ -1387,39 +1447,7 @@ export default function CreacionPage() {
     setPdfPreview(null);
   };
 
-  /* ===== Funciones de filtrado ===== */
-  const filtrarDocumentos = (documentos, filtros) => {
-    return documentos.filter(doc => {
-      const clienteNombre = doc.cliente?.nombre?.toLowerCase() || "";
-      const clienteEmpresa = doc.cliente?.empresa?.toLowerCase() || "";
-      const clienteRUT = doc.cliente?.rut?.toLowerCase() || "";
-      const docFecha = doc.fecha || "";
-
-      if (filtros.cliente) {
-        const buscar = filtros.cliente.toLowerCase();
-        if (!clienteNombre.includes(buscar) && !clienteEmpresa.includes(buscar)) {
-          return false;
-        }
-      }
-
-      if (filtros.rut) {
-        if (!clienteRUT.includes(filtros.rut.toLowerCase())) {
-          return false;
-        }
-      }
-
-      if (filtros.desde && docFecha < filtros.desde) {
-        return false;
-      }
-
-      if (filtros.hasta && docFecha > filtros.hasta) {
-        return false;
-      }
-
-      return true;
-    });
-  };
-
+  /* ===== Funciones de ordenamiento ===== */
   const ordenarPorFecha = (documentos) => {
     return [...documentos].sort((a, b) => {
       const fechaA = a.fecha || "";
@@ -1453,58 +1481,47 @@ export default function CreacionPage() {
     return <div className="min-h-screen bg-slate-50" />;
   }
 
-  // 🆕 Mostrar loading screen durante primera sincronización
-  if (isFirstSyncLoading) {
-    return (
-      <div className="min-h-screen w-full flex flex-col items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-4 p-8 bg-white rounded-lg shadow-lg">
-          <div className="relative w-16 h-16">
-            <div className="absolute inset-0 border-4 border-blue-200 rounded-full"></div>
-            <div className="absolute inset-0 border-4 border-blue-600 rounded-full animate-spin border-t-transparent"></div>
-          </div>
-          <div className="text-center">
-            <h2 className="text-xl font-semibold text-slate-800 mb-1">Sincronizando datos...</h2>
-            <p className="text-sm text-slate-500">Descargando información desde el servidor</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen w-full bg-slate-50 text-slate-900">
+    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 text-slate-900">
       <header
-        className="sticky top-0 z-20 text-white shadow-md"
+        className="sticky top-0 z-20 text-white shadow-soft-lg backdrop-blur-sm animate-fade-in-down"
         style={{
           background: `linear-gradient(135deg, ${brandConfig.primaryColor} 0%, ${brandConfig.accentColor} 100%)`
         }}
       >
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
-              <img 
-                src={brandConfig.logo} 
-                alt={brandConfig.name}
-                className="h-10 w-auto object-contain bg-white rounded-lg px-2 py-1"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
+        <div className="max-w-7xl mx-auto px-8 py-5">
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-4 animate-fade-in">
+              <div className="relative group">
+                <div className="absolute inset-0 bg-white blur-xl opacity-30 group-hover:opacity-50 transition-opacity duration-300"></div>
+                <img
+                  src={brandConfig.logo}
+                  alt={brandConfig.name}
+                  className="relative h-12 w-auto object-contain bg-white rounded-xl px-3 py-2 shadow-lg transform group-hover:scale-105 transition-transform duration-300"
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              </div>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">{brandConfig.name}</h1>
-                <p className="text-sm text-white/80">Sistema de Gestión</p>
+                <h1 className="text-2xl font-bold tracking-tight drop-shadow-lg">
+                  {brandConfig.name}
+                </h1>
+               
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 animate-fade-in">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
                 onClick={() => navigate('/')}
-                className="bg-white/10 hover:bg-white/20 text-white border-white/20"
+                className="bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm transition-all duration-300 group font-medium"
               >
-                ← Volver al Principal
+                <LayoutDashboard className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform duration-300" />
+                Volver al Principal
               </Button>
-              <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur text-sm font-medium">
+              <span className="px-4 py-2 rounded-xl bg-white/20 backdrop-blur-sm text-sm font-semibold shadow-soft">
                 {authUser?.company || 'Usuario'}
               </span>
               <Button
@@ -1515,8 +1532,9 @@ export default function CreacionPage() {
                   logout();
                   navigate('/');
                 }}
-                className="text-white hover:bg-white/10"
+                className="text-white hover:bg-red-500/30 transition-all duration-300 group font-medium rounded-xl"
               >
+                <LogOut className="w-4 h-4 mr-2 group-hover:translate-x-1 transition-transform duration-300" />
                 Cerrar sesión
               </Button>
             </div>
@@ -1524,31 +1542,42 @@ export default function CreacionPage() {
 
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v)}>
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <TabsList className="flex w-full md:w-auto gap-2 bg-white/10 backdrop-blur p-1 rounded-full border border-white/20">
+              <TabsList className="flex w-full md:w-auto gap-2 bg-white/15 backdrop-blur-md p-1.5 rounded-2xl border border-white/20 shadow-soft">
                 <TabsTrigger
                   value="clientes"
-                  className="rounded-full px-4 py-2 text-sm text-white/80 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow"
+                  className="rounded-xl px-5 py-2.5 text-sm text-white/90 font-medium data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-lg transition-all duration-300 data-[state=active]:scale-105"
                 >
-                  Proveedores
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    <span>Proveedores</span>
+                  </div>
                 </TabsTrigger>
                 <TabsTrigger
                   value="cotizaciones"
-                  className="rounded-full px-4 py-2 text-sm text-white/80 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow"
+                  className="rounded-xl px-5 py-2.5 text-sm text-white/90 font-medium data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-lg transition-all duration-300 data-[state=active]:scale-105"
                 >
-                  Cotizaciones
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    <span>Cotizaciones</span>
+                  </div>
                 </TabsTrigger>
                 <TabsTrigger
                   value="ordenes-compra"
-                  className="rounded-full px-4 py-2 text-sm text-white/80 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow"
+                  className="rounded-xl px-5 py-2.5 text-sm text-white/90 font-medium data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-lg transition-all duration-300 data-[state=active]:scale-105"
                 >
-                  Órdenes de Compra
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="w-4 h-4" />
+                    <span>Órdenes de Compra</span>
+                  </div>
                 </TabsTrigger>
-                {/* ✅ NUEVO TAB */}
                 <TabsTrigger
                   value="ordenes-trabajo"
-                  className="rounded-full px-4 py-2 text-sm text-white/80 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow"
+                  className="rounded-xl px-5 py-2.5 text-sm text-white/90 font-medium data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-lg transition-all duration-300 data-[state=active]:scale-105"
                 >
-                  Órdenes de Trabajo
+                  <div className="flex items-center gap-2">
+                    <Wrench className="w-4 h-4" />
+                    <span>Órdenes de Trabajo</span>
+                  </div>
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -1746,8 +1775,7 @@ export default function CreacionPage() {
             </Card>
 
             {(() => {
-              const filtradas = filtrarDocumentos(cotizaciones, filtrosCot);
-              const ordenadas = ordenarPorFecha(filtradas);
+              const ordenadas = ordenarPorFecha(cotizacionesFiltradas);
               const { paginados, totalPaginas, total } = paginarDocumentos(ordenadas, paginaCot);
 
               if (ordenadas.length === 0) {
@@ -1970,8 +1998,7 @@ export default function CreacionPage() {
             </Card>
 
             {(() => {
-              const filtradas = filtrarDocumentos(ordenesCompra, filtrosOC);
-              const ordenadas = ordenarPorFecha(filtradas);
+              const ordenadas = ordenarPorFecha(ordenesCompraFiltradas);
               const { paginados, totalPaginas, total } = paginarDocumentos(ordenadas, paginaOC);
 
               if (ordenadas.length === 0) {
@@ -2194,8 +2221,7 @@ export default function CreacionPage() {
             </Card>
 
             {(() => {
-              const filtradas = filtrarDocumentos(ordenesTrabajo, filtrosOT);
-              const ordenadas = ordenarPorFecha(filtradas);
+              const ordenadas = ordenarPorFecha(ordenesTrabajoFiltradas);
               const { paginados, totalPaginas, total } = paginarDocumentos(ordenadas, paginaOT);
 
               if (ordenadas.length === 0) {

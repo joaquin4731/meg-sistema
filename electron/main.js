@@ -151,6 +151,40 @@ function migrateFacturasVenta(item) {
 }
 
 /**
+ * Calcular tiempo hasta las 2:00 AM del siguiente día
+ */
+function getTimeUntil2AM() {
+  const now = new Date();
+  const next2AM = new Date();
+
+  next2AM.setHours(2, 0, 0, 0);
+
+  // Si ya pasaron las 2:00 AM hoy, programar para mañana
+  if (now >= next2AM) {
+    next2AM.setDate(next2AM.getDate() + 1);
+  }
+
+  return next2AM.getTime() - now.getTime();
+}
+
+/**
+ * Programar backup automático recursivamente
+ */
+function scheduleNextBackup() {
+  const timeUntil2AM = getTimeUntil2AM();
+  const hours = Math.floor(timeUntil2AM / (1000 * 60 * 60));
+  const minutes = Math.floor((timeUntil2AM % (1000 * 60 * 60)) / (1000 * 60));
+
+  console.log(`[AUTO-BACKUP] 📅 Próximo backup programado en ${hours}h ${minutes}m`);
+
+  setTimeout(() => {
+    performAutoBackup();
+    // Programar el siguiente backup
+    scheduleNextBackup();
+  }, timeUntil2AM);
+}
+
+/**
  * Backup Automático Diario
  * Guarda un backup completo en formato JSON en la carpeta de documentos del usuario
  * Mantiene los últimos 30 backups (1 mes)
@@ -193,8 +227,9 @@ function performAutoBackup() {
       }
     });
 
-    // Nombre del archivo con fecha y hora
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    // Nombre del archivo con fecha y hora (formato: backup-2025-11-19_22-30-45.json)
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
     const backupFile = path.join(backupsDir, `backup-${timestamp}.json`);
 
     // Guardar backup
@@ -439,24 +474,16 @@ function initDatabase() {
               // Ejecutar backup automático al iniciar (después de 10 segundos)
               setTimeout(() => performAutoBackup(), 10000);
 
-              // Programar backup automático cada 24 horas (a las 2:00 AM)
-              setInterval(() => {
-                const now = new Date();
-                if (now.getHours() === 2 && now.getMinutes() === 0) {
-                  performAutoBackup();
-                }
-              }, 60 * 1000); // Verificar cada minuto
+              // Programar backup automático (a las 2:00 AM cada día)
+              scheduleNextBackup();
 
               resolve();
             });
           } else {
             console.log('Database already has data');
 
-            // Ejecutar limpieza automática al iniciar
-            setTimeout(() => cleanupDeletedItems(), 5000);
-
-            // Programar limpieza automática cada 24 horas
-            setInterval(() => cleanupDeletedItems(), 24 * 60 * 60 * 1000);
+            // Programar backup automático (a las 2:00 AM cada día)
+            scheduleNextBackup();
 
             resolve();
           }
@@ -694,7 +721,7 @@ function startExpressServer() {
     });
 
     // POST /api/backup/import-all - Importar TODOS los apartados desde JSON
-    expressApp.post('/api/backup/import-all', (req, res) => {
+    expressApp.post('/api/backup/import-all', async (req, res) => {
       const backup = req.body;
 
       if (!backup || !backup.data) {
@@ -703,45 +730,56 @@ function startExpressServer() {
 
       console.log('[BACKUP] 📥 Importando backup completo...');
 
-      let imported = 0;
-      let errors = 0;
-
       const entries = Object.entries(backup.data);
-      let completed = 0;
-
-      entries.forEach(([key, data]) => {
-        const content = JSON.stringify(data);
-
-        db.run(
-          'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
-          [key, content],
-          function(err) {
-            if (err) {
-              console.error(`[BACKUP] Error importando ${key}:`, err);
-              errors++;
-            } else {
-              imported++;
-            }
-
-            completed++;
-
-            // Cuando terminen todas las operaciones
-            if (completed === entries.length) {
-              console.log(`[BACKUP] ✅ Importación completa: ${imported} exitosos, ${errors} errores`);
-              res.json({
-                success: true,
-                imported,
-                errors,
-                message: `Backup restaurado: ${imported} apartados`
-              });
-            }
-          }
-        );
-      });
 
       // Si no hay datos que importar
       if (entries.length === 0) {
-        res.json({ success: true, imported: 0, errors: 0, message: 'Backup vacío' });
+        return res.json({ success: true, imported: 0, errors: 0, message: 'Backup vacío' });
+      }
+
+      try {
+        // Convertir db.run a Promise para usar con Promise.all
+        const importPromises = entries.map(([key, data]) => {
+          return new Promise((resolve, reject) => {
+            const content = JSON.stringify(data);
+
+            db.run(
+              'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+              [key, content],
+              function(err) {
+                if (err) {
+                  console.error(`[BACKUP] Error importando ${key}:`, err);
+                  resolve({ success: false, key, error: err.message });
+                } else {
+                  resolve({ success: true, key });
+                }
+              }
+            );
+          });
+        });
+
+        // Esperar a que todas las importaciones terminen
+        const results = await Promise.all(importPromises);
+
+        // Contar exitosos y errores
+        const imported = results.filter(r => r.success).length;
+        const errors = results.filter(r => !r.success).length;
+
+        console.log(`[BACKUP] ✅ Importación completa: ${imported} exitosos, ${errors} errores`);
+
+        res.json({
+          success: true,
+          imported,
+          errors,
+          message: `Backup restaurado: ${imported} apartados`
+        });
+      } catch (error) {
+        console.error('[BACKUP] ❌ Error fatal en importación:', error);
+        res.status(500).json({
+          success: false,
+          error: 'Error al importar backup',
+          message: error.message
+        });
       }
     });
 
