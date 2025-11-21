@@ -247,6 +247,34 @@ const todayISO = () => new Date().toISOString().slice(0,10);
 const CLP = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP" });
 const fmtMoney = (n) => CLP.format(Math.round(Number(n || 0)));
 
+/**
+ * Extrae el valor numérico de un texto que puede contener formato
+ * Ejemplos: "(GL) 2.000.000" => 2000000, "Neto: 5.000.000" => 5000000
+ * @param {string} texto - El texto de entrada
+ * @returns {number} - El valor numérico extraído
+ */
+const extraerValorNumerico = (texto) => {
+  if (typeof texto === 'number') return texto;
+  if (!texto) return 0;
+
+  // Convertir a string y eliminar todo excepto dígitos, puntos y comas
+  const soloNumeros = String(texto).replace(/[^\d.,]/g, '');
+
+  // Manejar formato chileno: 1.000.000,50 o español: 1.000.000
+  // Si hay coma, asumimos que es decimal
+  let valorLimpio = soloNumeros;
+  if (soloNumeros.includes(',')) {
+    // Reemplazar puntos (separadores de miles) y convertir coma a punto decimal
+    valorLimpio = soloNumeros.replace(/\./g, '').replace(',', '.');
+  } else {
+    // Si solo hay puntos, eliminarlos (son separadores de miles)
+    valorLimpio = soloNumeros.replace(/\./g, '');
+  }
+
+  const numero = parseFloat(valorLimpio);
+  return isNaN(numero) ? 0 : numero;
+};
+
 /* ===========================
    Configuración de marca por usuario
    =========================== */
@@ -470,7 +498,7 @@ export default function CreacionPage() {
       fecha: todayISO(),
       updatedAt: new Date().toISOString(),
       cliente: null,
-      items: [{ id: uid(), codigo: "", cantidad: 1, descripcion: "", precioUnitario: 0, valorTotal: 0 }],
+      items: [{ id: uid(), codigo: "", cantidad: 1, descripcion: "", precioUnitario: 0, precioUnitarioTexto: "", valorTotal: 0 }],
       totalNeto: 0,
       // ✅ NUEVO: Campos personalizables
       incluye: "Precios sin IVA",
@@ -1139,7 +1167,8 @@ export default function CreacionPage() {
         const codigo = it.codigo || "-";
         const cantidad = String(Number(it.cantidad || 0));
         const descLines = wrapText(it.descripcion || "-", W.desc - 10, 9, font);
-        const precioTxt = fmtMoney(Number(it.precioUnitario || 0));
+        // Usar el texto formateado si existe, sino formatear el número
+        const precioTxt = it.precioUnitarioTexto || fmtMoney(Number(it.precioUnitario || 0));
         const totalTxt = fmtMoney(Number(it.valorTotal || 0));
 
         const rowHeight = Math.max(descLines.length * line, line * 1.5);
@@ -1226,11 +1255,35 @@ export default function CreacionPage() {
 
       // ✅ NUEVO: Sección personalizable
       y -= line * 3;
-      ensureSpace(line * 8);
+
+      // ✅ STEP 1: Calcular todas las líneas de texto PRIMERO
+      const incluyeLines = wrapText(documento.incluye || "Precios sin IVA", innerW - 20, 9, font);
+      const faenaText = `Faena: ${documento.faena || "Interior de planta Generación"}`;
+      const faenaLines = wrapText(faenaText, innerW - 20, 9, font);
+      const notaText = `Nota: ${documento.nota || "4 días hábiles de trabajo y con bloqueos de seguridad requeridos para la faena"}`;
+      const notaLines = wrapText(notaText, innerW - 20, 9, font);
+      const formaPagoText = `FORMA DE PAGO: ${documento.formaPago || "45 DÍAS HÁBILES CONTRA ORDEN DE COMPRA"}`;
+      const formaPagoLines = wrapText(formaPagoText, innerW - 20, 9, font);
+
+      // ✅ STEP 2: Calcular la altura dinámica basada en el contenido real
+      const totalLines =
+        1 + // "Incluye:" título
+        incluyeLines.length +
+        0.2 + // spacing
+        faenaLines.length +
+        0.2 + // spacing
+        notaLines.length +
+        0.5 + // spacing
+        formaPagoLines.length +
+        2; // padding inferior
+
+      const infoBoxHeight = totalLines * line + line * 0.8; // altura dinámica + padding superior
+
+      ensureSpace(infoBoxHeight + line * 2);
 
       const infoBoxY = y;
-      const infoBoxHeight = line * 6.5;
 
+      // ✅ STEP 3: Dibujar el rectángulo con altura dinámica
       page.drawRectangle({
         x: margin,
         y: y - infoBoxHeight,
@@ -1242,35 +1295,28 @@ export default function CreacionPage() {
 
       y -= line * 0.8;
 
-      // ✅ Usar campos personalizables
+      // ✅ STEP 4: Dibujar el texto (usando las líneas ya calculadas)
       page.drawText("Incluye:", { x: margin + 10, y, size: 10, font: bold });
       y -= line;
-      const incluyeLines = wrapText(documento.incluye || "Precios sin IVA", innerW - 20, 9, font);
-      for (let i = 0; i < Math.min(incluyeLines.length, 20); i++) {
+      for (let i = 0; i < incluyeLines.length; i++) {
         page.drawText(incluyeLines[i], { x: margin + 10, y, size: 9, font });
         y -= line;
       }
 
       y -= line * 0.2;
-      const faenaText = `Faena: ${documento.faena || "Interior de planta Generación"}`;
-      const faenaLines = wrapText(faenaText, innerW - 20, 9, font);
-      for (let i = 0; i < Math.min(faenaLines.length, 20); i++) {
+      for (let i = 0; i < faenaLines.length; i++) {
         page.drawText(faenaLines[i], { x: margin + 10, y, size: 9, font: bold });
         y -= line;
       }
 
       y -= line * 0.2;
-      const notaText = `Nota: ${documento.nota || "4 días hábiles de trabajo y con bloqueos de seguridad requeridos para la faena"}`;
-      const notaLines = wrapText(notaText, innerW - 20, 9, font);
-      for (let i = 0; i < Math.min(notaLines.length, 20); i++) {
+      for (let i = 0; i < notaLines.length; i++) {
         page.drawText(notaLines[i], { x: margin + 10, y, size: 9, font });
         y -= line;
       }
 
       y -= line * 0.5;
-      const formaPagoText = `FORMA DE PAGO: ${documento.formaPago || "45 DÍAS HÁBILES CONTRA ORDEN DE COMPRA"}`;
-      const formaPagoLines = wrapText(formaPagoText, innerW - 20, 9, font);
-      for (let i = 0; i < Math.min(formaPagoLines.length, 20); i++) {
+      for (let i = 0; i < formaPagoLines.length; i++) {
         page.drawText(formaPagoLines[i], {
           x: margin + 10,
           y,
@@ -1282,8 +1328,14 @@ export default function CreacionPage() {
 
       y -= line * 2;
 
-      // ✅ NUEVO: Condiciones Comerciales Editables
+      // ✅ Separación clara entre el cuadro negro y las condiciones comerciales
+      y -= line * 2; // Espacio adicional de separación
+
+      // ✅ NUEVO: Condiciones Comerciales Editables (fuera del cuadro negro)
       if ((documento.condicionesComerciales || "").trim()) {
+        // Verificar espacio antes de dibujar el título
+        ensureSpace(line * 4);
+
         const tituloCondiciones = isMyOrganic
           ? "CONDICIONES COMERCIALES – MYORGANIC"
           : "CONDICIONES COMERCIALES – MEG MONTAJES";
@@ -1302,9 +1354,6 @@ export default function CreacionPage() {
             }
           }
         }
-
-        // Verificar que hay espacio para el título
-        ensureSpace(line * 4);
 
         page.drawText(tituloCondiciones, {
           x: margin,
@@ -2449,6 +2498,20 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
       }
     }
 
+    // Migración de items: agregar precioUnitarioTexto si no existe
+    if (migrado.items && Array.isArray(migrado.items)) {
+      migrado.items = migrado.items.map(item => {
+        // Si el item no tiene precioUnitarioTexto, inicializarlo vacío
+        if (!('precioUnitarioTexto' in item)) {
+          return {
+            ...item,
+            precioUnitarioTexto: ""
+          };
+        }
+        return item;
+      });
+    }
+
     return migrado;
   };
 
@@ -2516,7 +2579,7 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
 
   const addItem = () => {
     setDraft(d => {
-      const nuevo = { id: uid(), codigo: "", cantidad: 1, descripcion: "", precioUnitario: 0, valorTotal: 0 };
+      const nuevo = { id: uid(), codigo: "", cantidad: 1, descripcion: "", precioUnitario: 0, precioUnitarioTexto: "", valorTotal: 0 };
       const items = [...d.items, nuevo];
       return { ...d, items, totalNeto: recomputeTotals(items) };
     });
@@ -2533,10 +2596,30 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
     setDraft(d => {
       const items = d.items.map(it => {
         if (it.id !== itemId) return it;
-        const next = { ...it, [campo]: ['cantidad','precioUnitario'].includes(campo) ? Number(valor || 0) : valor };
+
+        // Manejar actualización de campos
+        let next = { ...it };
+
+        if (campo === 'cantidad') {
+          next.cantidad = Number(valor || 0);
+        } else if (campo === 'precioUnitarioTexto') {
+          // Guardar el texto ingresado
+          next.precioUnitarioTexto = valor;
+          // Extraer y guardar el valor numérico para cálculos
+          next.precioUnitario = extraerValorNumerico(valor);
+        } else if (campo === 'precioUnitario') {
+          // Compatibilidad con código antiguo (por si acaso)
+          next.precioUnitario = Number(valor || 0);
+          next.precioUnitarioTexto = String(valor || "");
+        } else {
+          next[campo] = valor;
+        }
+
+        // Recalcular valor total
         const cantidad = Number(next.cantidad || 0);
-        const precio   = Number(next.precioUnitario || 0);
+        const precio = Number(next.precioUnitario || 0);
         next.valorTotal = cantidad * precio;
+
         return next;
       });
       return { ...d, items, totalNeto: recomputeTotals(items) };
@@ -2839,10 +2922,11 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
                         />
                       </TableCell>
                       <TableCell>
-                        <MoneyInput
-                          valueNumber={item.precioUnitario || 0}
-                          onValueNumberChange={(num) => updItem(item.id, 'precioUnitario', num)}
-                          placeholder="0"
+                        <Input
+                          type="text"
+                          value={item.precioUnitarioTexto || ""}
+                          onChange={(e) => updItem(item.id, 'precioUnitarioTexto', e.target.value)}
+                          placeholder="Ej: (GL) 2.000.000 o 5.000.000"
                         />
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-medium">

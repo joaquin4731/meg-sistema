@@ -425,60 +425,179 @@ function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setIsLoading(true);
 
     const result = await login(username, password);
 
     if (!result.success) {
       setError(result.error || "Usuario o contraseña incorrectos");
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-md p-6 space-y-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-slate-800">Sistema de Cotizaciones</h1>
-          <p className="text-slate-600">Inicia sesión para continuar</p>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-slate-50 to-orange-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      {/* Animated background shapes */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-72 h-72 bg-blue-200/30 rounded-full blur-3xl animate-pulse" style={{animationDuration: '4s'}}></div>
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-orange-200/30 rounded-full blur-3xl animate-pulse" style={{animationDuration: '6s', animationDelay: '1s'}}></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-purple-200/20 rounded-full blur-3xl animate-pulse" style={{animationDuration: '5s', animationDelay: '2s'}}></div>
+      </div>
+
+      {/* Login card with glassmorphism */}
+      <div className="w-full max-w-md relative z-10 animate-fade-in" style={{animation: 'fadeInUp 0.6s ease-out'}}>
+        <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-8 space-y-6">
+          {/* Logo/Icon with animation */}
+          <div className="text-center space-y-2 animate-fade-in" style={{animation: 'fadeInDown 0.8s ease-out'}}>
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-orange-500 rounded-2xl mb-4 shadow-lg transform hover:scale-110 transition-transform duration-300">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-orange-600 bg-clip-text text-transparent">
+              Sistema de Cotizaciones
+            </h1>
+            <p className="text-slate-600 font-medium">Bienvenido, inicia sesión para continuar</p>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Username field */}
+            <div className="space-y-2 transform transition-all duration-300 hover:scale-[1.02]">
+              <Label htmlFor="username" className="text-slate-700 font-semibold flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                Usuario
+              </Label>
+              <Input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="meg_2025 o myorganic_2025"
+                className="h-12 border-2 focus:border-blue-500 transition-all duration-300 bg-white/50 backdrop-blur"
+                required
+              />
+            </div>
+
+            {/* Password field */}
+            <div className="space-y-2 transform transition-all duration-300 hover:scale-[1.02]">
+              <Label htmlFor="password" className="text-slate-700 font-semibold flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                Contraseña
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+                className="h-12 border-2 focus:border-blue-500 transition-all duration-300 bg-white/50 backdrop-blur"
+                required
+              />
+            </div>
+
+            {/* Error message with animation */}
+            {error && (
+              <div className="bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 animate-fade-in" style={{animation: 'shake 0.5s'}}>
+                <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+                {error}
+              </div>
+            )}
+
+            {/* Submit button */}
+            <Button
+              type="submit"
+              disabled={isLoading}
+              className="w-full h-12 bg-gradient-to-r from-blue-600 to-orange-600 hover:from-blue-700 hover:to-orange-700 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? (
+                <div className="flex items-center gap-2">
+                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Iniciando sesión...
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2">
+                  <span>Iniciar sesión</span>
+                  <svg className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                </div>
+              )}
+            </Button>
+          </form>
+
+          {/* User hints */}
+          <div className="pt-4 border-t border-slate-200">
+            <p className="text-xs text-slate-500 text-center mb-3 font-medium">Usuarios disponibles:</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gradient-to-br from-orange-50 to-orange-100/50 border border-orange-200/50 rounded-lg p-3 hover:shadow-md transition-shadow">
+                <p className="text-xs font-semibold text-orange-800 mb-1">MEG Industrial</p>
+                <code className="text-xs bg-white/80 px-2 py-1 rounded border border-orange-200 text-orange-700 font-mono">meg_2025</code>
+              </div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200/50 rounded-lg p-3 hover:shadow-md transition-shadow">
+                <p className="text-xs font-semibold text-blue-800 mb-1">MyOrganic</p>
+                <code className="text-xs bg-white/80 px-2 py-1 rounded border border-blue-200 text-blue-700 font-mono">myorganic_2025</code>
+              </div>
+            </div>
+          </div>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="username" className="text-slate-700">Usuario</Label>
-            <Input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="ej: meg_2025"
-              className="mt-1"
-            />
-          </div>
-          <div>
-            <Label htmlFor="password" className="text-slate-700">Contraseña</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="mt-1"
-            />
-          </div>
-          {error && (
-            <div className="text-red-500 text-sm">{error}</div>
-          )}
-          <Button type="submit" className="w-full">
-            Iniciar sesión
-          </Button>
-        </form>
-        <div className="text-xs text-slate-500 text-center mt-4">
-          <p>MEG Industrial: <code className="bg-slate-100 px-1 rounded">meg_2025</code></p>
-          <p>MyOrganic: <code className="bg-slate-100 px-1 rounded">myorganic_2025</code></p>
+
+        {/* Footer */}
+        <div className="text-center mt-6 text-sm text-slate-600 font-medium animate-fade-in" style={{animation: 'fadeIn 1s ease-out 0.3s backwards'}}>
+          <p>© 2025 MEG Industrial & MyOrganic</p>
         </div>
       </div>
+
+      {/* Add keyframe animations */}
+      <style>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes fadeInDown {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+          20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -506,6 +625,11 @@ function MainApp({ user, company, onLogout }) {
 
   // Estado de modal de edición (levantado para detectar edición activa)
   const [sel, setSel] = useState(null); // cotización seleccionada (para modal)
+
+  // Estados para modal de restauración de backup
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [pendingBackup, setPendingBackup] = useState(null);
+  const [restoreMode, setRestoreMode] = useState("merge"); // "merge" o "replace"
 
   // Hook con callback para detectar edición activa
   const { data, setData, loading, isSaving } = useStore(user.userKey, toast, () => {
@@ -718,6 +842,7 @@ const compData = useMemo(() => ([
     }
   };
 
+  // PASO 1: Cargar archivo y validar (muestra modal para elegir modo)
   const importBackupCompleto = (file) => {
     const reader = new FileReader();
     reader.onload = async () => {
@@ -777,36 +902,67 @@ const compData = useMemo(() => ([
           }
         }
 
-        console.log('[IMPORT] ✅ Validación de backup exitosa, importando...');
+        console.log('[IMPORT] ✅ Validación de backup exitosa');
 
-        const res = await fetch(`${API_BASE}/api/backup/import-all`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(backup)
-        });
+        // Guardar backup validado y mostrar modal de selección de modo
+        setPendingBackup(backup);
+        setShowRestoreModal(true);
 
-        if (!res.ok) {
-          const errorText = await res.text();
-          console.error('[IMPORT] Error del servidor:', errorText);
-          toast.error('Error al importar backup completo');
-          return;
-        }
-
-        const result = await res.json();
-        toast.success(`Backup restaurado: ${result.imported} apartados`);
-
-        // Recargar página para reflejar cambios
-        setTimeout(() => window.location.reload(), 1500);
       } catch (error) {
-        console.error('[IMPORT] Error importando backup:', error);
+        console.error('[IMPORT] Error validando backup:', error);
         if (error instanceof SyntaxError) {
           toast.error("Archivo de backup corrupto (JSON inválido)");
         } else {
-          toast.error("Error al importar backup completo");
+          toast.error("Error al validar backup");
         }
       }
     };
     reader.readAsText(file);
+  };
+
+  // PASO 2: Ejecutar restauración según modo seleccionado
+  const ejecutarRestauracion = async () => {
+    if (!pendingBackup) return;
+
+    const endpoint = restoreMode === "merge"
+      ? `${API_BASE}/api/backup/import-merge`
+      : `${API_BASE}/api/backup/import-all`;
+
+    const modoTexto = restoreMode === "merge" ? "Combinando" : "Reemplazando";
+
+    try {
+      console.log(`[IMPORT] ${modoTexto} datos con backup...`);
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pendingBackup)
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('[IMPORT] Error del servidor:', errorText);
+        toast.error('Error al restaurar backup');
+        return;
+      }
+
+      const result = await res.json();
+
+      if (restoreMode === "merge") {
+        toast.success(`Backup combinado exitosamente: ${result.merged} apartados`);
+      } else {
+        toast.success(`Backup restaurado: ${result.imported} apartados`);
+      }
+
+      // Cerrar modal y recargar página
+      setShowRestoreModal(false);
+      setPendingBackup(null);
+      setTimeout(() => window.location.reload(), 1500);
+
+    } catch (error) {
+      console.error('[IMPORT] Error restaurando backup:', error);
+      toast.error("Error al restaurar backup");
+    }
   };
 
   // Duplicar cotización
@@ -1038,7 +1194,7 @@ const exportToExcel = () => {
                 >
                   <div className="flex items-center gap-2">
                     <FileBarChart className="w-4 h-4" />
-                    <span>Cotizaciones</span>
+                    <span>Registro de cotizaciones</span>
                   </div>
                 </TabsTrigger>
                 <TabsTrigger
@@ -1051,7 +1207,7 @@ const exportToExcel = () => {
                 >
                   <div className="flex items-center gap-2">
                     <FilePlus className="w-4 h-4" />
-                    <span>Nueva cotización</span>
+                    <span>Registro general</span>
                   </div>
                 </TabsTrigger>
               </TabsList>
@@ -1613,6 +1769,115 @@ const exportToExcel = () => {
       </div>
     </footer>
   </main>
+
+  {/* Modal de Restauración de Backup */}
+  {showRestoreModal && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 p-6 space-y-4 animate-fade-in">
+        <div className="flex items-center justify-between border-b pb-4">
+          <h3 className="text-lg font-bold text-slate-900">Modo de Restauración</h3>
+          <button
+            onClick={() => {
+              setShowRestoreModal(false);
+              setPendingBackup(null);
+            }}
+            className="text-slate-400 hover:text-slate-600 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+
+        <p className="text-sm text-slate-600">
+          Selecciona cómo deseas restaurar el backup:
+        </p>
+
+        <div className="space-y-3">
+          {/* Opción: Combinar (Merge) */}
+          <label
+            className={`flex items-start gap-3 p-4 border-2 rounded-xl cursor-pointer transition-all ${
+              restoreMode === "merge"
+                ? "border-blue-500 bg-blue-50"
+                : "border-slate-200 hover:border-slate-300"
+            }`}
+          >
+            <input
+              type="radio"
+              name="restoreMode"
+              value="merge"
+              checked={restoreMode === "merge"}
+              onChange={() => setRestoreMode("merge")}
+              className="mt-1"
+            />
+            <div className="flex-1">
+              <div className="font-semibold text-slate-900">
+                🔀 Combinar con datos existentes (Recomendado)
+              </div>
+              <p className="text-sm text-slate-600 mt-1">
+                Combina los datos del backup con tus datos actuales. No se pierde nada, los registros duplicados se actualizan con la versión más reciente.
+              </p>
+            </div>
+          </label>
+
+          {/* Opción: Reemplazar */}
+          <label
+            className={`flex items-start gap-3 p-4 border-2 rounded-xl cursor-pointer transition-all ${
+              restoreMode === "replace"
+                ? "border-red-500 bg-red-50"
+                : "border-slate-200 hover:border-slate-300"
+            }`}
+          >
+            <input
+              type="radio"
+              name="restoreMode"
+              value="replace"
+              checked={restoreMode === "replace"}
+              onChange={() => setRestoreMode("replace")}
+              className="mt-1"
+            />
+            <div className="flex-1">
+              <div className="font-semibold text-slate-900">
+                ⚠️ Reemplazar completamente
+              </div>
+              <p className="text-sm text-slate-600 mt-1">
+                Reemplaza todos los datos actuales con los del backup. Los datos que no estén en el backup se perderán permanentemente.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        {/* Advertencia si modo reemplazar */}
+        {restoreMode === "replace" && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+            <strong>⚠️ Advertencia:</strong> Esta acción eliminará todos los datos que no estén en el backup. Asegúrate de haber exportado un backup reciente antes de continuar.
+          </div>
+        )}
+
+        {/* Botones de acción */}
+        <div className="flex gap-3 pt-4">
+          <button
+            onClick={() => {
+              setShowRestoreModal(false);
+              setPendingBackup(null);
+            }}
+            className="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={ejecutarRestauracion}
+            className={`flex-1 px-4 py-2 rounded-lg text-white font-medium transition-colors ${
+              restoreMode === "merge"
+                ? "bg-blue-600 hover:bg-blue-700"
+                : "bg-red-600 hover:bg-red-700"
+            }`}
+          >
+            {restoreMode === "merge" ? "Combinar Datos" : "Reemplazar Datos"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
 </div>
 
 );
@@ -2164,6 +2429,11 @@ const c = {
         </div>
       )}
 
+      {/* === REGISTRAR COTIZACIÓN === */}
+      <div className="flex items-center gap-3 py-3 border-b-2 border-slate-200 mb-2">
+        <h3 className="text-lg font-bold text-slate-800">📋 Registrar cotización</h3>
+      </div>
+
       {/* Datos clave */}
     <section className="grid md:grid-cols-3 gap-4">
   <Field label="Codigo Cotización"><Input value={numero} onChange={e=>setNumero(e.target.value)} /></Field>
@@ -2193,8 +2463,12 @@ const c = {
 
       <PDFManager label="PDF(s) de la Cotización" files={cotPDFs} onChange={setCotPDFs} />
 
+      {/* === REGISTRAR ORDEN DE COMPRA === */}
+      <div className="flex items-center gap-3 py-3 border-b-2 border-slate-200 mb-2 mt-8">
+        <h3 className="text-lg font-bold text-slate-800">📦 Registrar Orden de compra</h3>
+      </div>
+
       {/* OC del Cliente */}
-{/* OC del Cliente */}
 <section className="grid md:grid-cols-3 gap-4">
   <Field label="Cliente/Empresa (OC)"><Input value={ocClienteNombre} onChange={e=>setOCClienteNombre(e.target.value)} placeholder="Nombre OC" /></Field>
   <Field label="RUT (OC)"><Input value={ocClienteRUT} onChange={e=>setOCClienteRUT(e.target.value)} placeholder="76.123.456-7" /></Field>
@@ -2219,6 +2493,11 @@ const c = {
 </section>
 
       <PDFManager label="PDF(s) de la OC del Cliente" files={ocPDFs} onChange={setOCPDFs} />
+
+      {/* === REGISTRAR ORDEN DE TRABAJO === */}
+      <div className="flex items-center gap-3 py-3 border-b-2 border-slate-200 mb-2 mt-8">
+        <h3 className="text-lg font-bold text-slate-800">⚙️ Registrar Orden de trabajo</h3>
+      </div>
 
       {/* OT */}
       <section className="space-y-3">
@@ -2369,10 +2648,14 @@ const c = {
   </div>
       </section>
 
+      {/* === REGISTRAR FACTURA DE VENTA === */}
+      <div className="flex items-center gap-3 py-3 border-b-2 border-slate-200 mb-2 mt-8">
+        <h3 className="text-lg font-bold text-slate-800">💰 Registrar factura de venta</h3>
+      </div>
+
       {/* Facturas múltiples */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h4 className="text-lg font-semibold">Facturas de Venta</h4>
+        <div className="flex items-center justify-end">
           <Button variant="secondary" className="gap-2" onClick={addFactura}><Plus size={16}/> Agregar Factura</Button>
         </div>
 
@@ -2471,9 +2754,13 @@ const c = {
         </div>
       </section>
 
+      {/* === REGISTRAR FINANCIAMIENTO === */}
+      <div className="flex items-center gap-3 py-3 border-b-2 border-slate-200 mb-2 mt-8">
+        <h3 className="text-lg font-bold text-slate-800">💳 Registrar financiamiento</h3>
+      </div>
+
       {/* FINANCIAMIENTO (no afecta cálculos) */}
 <section className="space-y-3">
-  <h4 className="text-lg font-semibold">Financiamiento</h4>
 
   <div className="grid md:grid-cols-4 gap-4">
     <Field label="Cliente / Banco">

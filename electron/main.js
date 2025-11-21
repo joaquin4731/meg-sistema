@@ -720,7 +720,7 @@ function startExpressServer() {
       });
     });
 
-    // POST /api/backup/import-all - Importar TODOS los apartados desde JSON
+    // POST /api/backup/import-all - Importar TODOS los apartados desde JSON (REEMPLAZA TODO)
     expressApp.post('/api/backup/import-all', async (req, res) => {
       const backup = req.body;
 
@@ -728,7 +728,7 @@ function startExpressServer() {
         return res.status(400).json({ error: 'Invalid backup format' });
       }
 
-      console.log('[BACKUP] 📥 Importando backup completo...');
+      console.log('[BACKUP] 📥 Importando backup completo (modo REEMPLAZAR)...');
 
       const entries = Object.entries(backup.data);
 
@@ -782,6 +782,154 @@ function startExpressServer() {
         });
       }
     });
+
+    // POST /api/backup/import-merge - NUEVO: Merge inteligente (combina datos sin perder nada)
+    expressApp.post('/api/backup/import-merge', async (req, res) => {
+      const backup = req.body;
+
+      if (!backup || !backup.data) {
+        return res.status(400).json({ error: 'Invalid backup format' });
+      }
+
+      console.log('[BACKUP-MERGE] 🔀 Iniciando merge inteligente...');
+
+      const entries = Object.entries(backup.data);
+
+      if (entries.length === 0) {
+        return res.json({
+          success: true,
+          merged: 0,
+          added: 0,
+          updated: 0,
+          message: 'Backup vacío'
+        });
+      }
+
+      try {
+        let totalMerged = 0;
+        let totalAdded = 0;
+        let totalUpdated = 0;
+
+        for (const [key, backupData] of entries) {
+          // Obtener datos actuales de la base de datos
+          const currentRow = await new Promise((resolve, reject) => {
+            db.get('SELECT content FROM app_data WHERE id = ?', [key], (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            });
+          });
+
+          let mergedData;
+
+          if (!currentRow) {
+            // No existe en DB, insertar directamente
+            mergedData = backupData;
+            console.log(`[BACKUP-MERGE] ➕ ${key}: No existe, insertando...`);
+          } else {
+            // Ya existe, hacer merge inteligente
+            const currentData = JSON.parse(currentRow.content);
+            mergedData = smartMerge(key, currentData, backupData);
+            console.log(`[BACKUP-MERGE] 🔀 ${key}: Merge completado`);
+          }
+
+          // Guardar datos merged
+          await new Promise((resolve, reject) => {
+            db.run(
+              'INSERT OR REPLACE INTO app_data (id, content, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+              [key, JSON.stringify(mergedData)],
+              function(err) {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+          });
+
+          totalMerged++;
+        }
+
+        console.log(`[BACKUP-MERGE] ✅ Merge completo: ${totalMerged} apartados procesados`);
+
+        res.json({
+          success: true,
+          merged: totalMerged,
+          message: `Backup combinado exitosamente: ${totalMerged} apartados`
+        });
+
+      } catch (error) {
+        console.error('[BACKUP-MERGE] ❌ Error en merge:', error);
+        res.status(500).json({
+          success: false,
+          error: 'Error al hacer merge del backup',
+          message: error.message
+        });
+      }
+    });
+
+    /**
+     * SMART MERGE: Combina datos actuales con backup sin perder nada
+     * @param {String} key - Clave del apartado (meg, myorganic, meg_creacion, etc.)
+     * @param {Object} currentData - Datos actuales en DB
+     * @param {Object} backupData - Datos del backup
+     * @returns {Object} - Datos combinados
+     */
+    function smartMerge(key, currentData, backupData) {
+      const isCreacion = key.endsWith('_creacion');
+
+      if (isCreacion) {
+        // Apartado de creación: merge de 4 arrays
+        return {
+          clientes: mergeArray(currentData.clientes || [], backupData.clientes || [], 'rut'),
+          cotizaciones: mergeArray(currentData.cotizaciones || [], backupData.cotizaciones || [], 'numero'),
+          ordenesCompra: mergeArray(currentData.ordenesCompra || [], backupData.ordenesCompra || [], 'numero'),
+          ordenesTrabajo: mergeArray(currentData.ordenesTrabajo || [], backupData.ordenesTrabajo || [], 'numero')
+        };
+      } else {
+        // Apartado principal: solo cotizaciones
+        return {
+          cotizaciones: mergeArray(currentData.cotizaciones || [], backupData.cotizaciones || [], 'numero')
+        };
+      }
+    }
+
+    /**
+     * Merge de arrays por ID único, manteniendo el más reciente en caso de duplicados
+     * @param {Array} currentArray - Array actual
+     * @param {Array} backupArray - Array del backup
+     * @param {String} idField - Campo que sirve como ID único (rut, numero, etc.)
+     * @returns {Array} - Array combinado sin duplicados
+     */
+    function mergeArray(currentArray, backupArray, idField) {
+      const merged = {};
+
+      // Agregar items actuales
+      currentArray.forEach(item => {
+        const id = item[idField];
+        if (id) {
+          merged[id] = item;
+        }
+      });
+
+      // Agregar/actualizar con items del backup
+      backupArray.forEach(item => {
+        const id = item[idField];
+        if (id) {
+          const existing = merged[id];
+
+          if (!existing) {
+            // No existe, agregar
+            merged[id] = item;
+          } else {
+            // Ya existe, mantener el más reciente según updatedAt o fecha
+            if (isNewer(item, existing)) {
+              merged[id] = item;
+            }
+            // Si el actual es más reciente, no hacer nada (mantener el actual)
+          }
+        }
+      });
+
+      return Object.values(merged);
+    }
 
     // Iniciar servidor
     expressServer = expressApp.listen(EXPRESS_PORT, () => {
