@@ -2579,7 +2579,7 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
 
   const addItem = () => {
     setDraft(d => {
-      const nuevo = { id: uid(), codigo: "", cantidad: 1, descripcion: "", precioUnitario: 0, precioUnitarioTexto: "", valorTotal: 0 };
+      const nuevo = { id: uid(), codigo: "", cantidad: 1, descripcion: "", precioUnitario: 0, precioUnitarioTexto: "", valorTotal: 0, valorTotalTexto: "", valorTotalManual: false };
       const items = [...d.items, nuevo];
       return { ...d, items, totalNeto: recomputeTotals(items) };
     });
@@ -2607,6 +2607,11 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
           next.precioUnitarioTexto = valor;
           // Extraer y guardar el valor numérico para cálculos
           next.precioUnitario = extraerValorNumerico(valor);
+        } else if (campo === 'valorTotalTexto') {
+          // ✅ NUEVO: Cuando se edita manualmente el valor total
+          next.valorTotalTexto = valor;
+          next.valorTotal = extraerValorNumerico(valor);
+          next.valorTotalManual = true; // Flag para indicar que fue editado manualmente
         } else if (campo === 'precioUnitario') {
           // Compatibilidad con código antiguo (por si acaso)
           next.precioUnitario = Number(valor || 0);
@@ -2615,10 +2620,16 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
           next[campo] = valor;
         }
 
-        // Recalcular valor total
-        const cantidad = Number(next.cantidad || 0);
-        const precio = Number(next.precioUnitario || 0);
-        next.valorTotal = cantidad * precio;
+        // ✅ MODIFICADO: Solo recalcular si NO fue editado manualmente
+        if (campo !== 'valorTotalTexto' && !next.valorTotalManual) {
+          const cantidad = Number(next.cantidad || 0);
+          const precio = Number(next.precioUnitario || 0);
+          next.valorTotal = cantidad * precio;
+          // Si el valor es numérico, sincronizar el texto
+          if (next.valorTotal > 0) {
+            next.valorTotalTexto = String(next.valorTotal);
+          }
+        }
 
         return next;
       });
@@ -2929,8 +2940,13 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
                           placeholder="Ej: (GL) 2.000.000 o 5.000.000"
                         />
                       </TableCell>
-                      <TableCell className="whitespace-nowrap font-medium">
-                        {fmtMoney(item.valorTotal || 0)}
+                      <TableCell>
+                        <Input
+                          type="text"
+                          value={item.valorTotalTexto || ""}
+                          onChange={(e) => updItem(item.id, 'valorTotalTexto', e.target.value)}
+                          placeholder="Ej: 5.000.000"
+                        />
                       </TableCell>
                       <TableCell className="text-right">
                         <Button type="button" variant="ghost" size="sm" onClick={() => delItem(item.id)}>
