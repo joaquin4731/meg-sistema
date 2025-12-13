@@ -3104,7 +3104,7 @@ function DetalleCotizacionVista({ cot, usarNetoSinIVA }){
 
 {/* Facturas múltiples (VISTA) */}
 <div>
-  <h4 className="font-semibold mb-2">Facturas de Venta</h4>
+  <h4 className="font-semibold mb-2">Facturas de Compra</h4>
   <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
     <CardContent className="p-0">
       <Table className="text-sm
@@ -3709,88 +3709,6 @@ const addFactura = () => setFacturas([
           </div>
         </div>
 
-        {/* NUEVO: Factura de Venta Asociada */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <h5 className="text-sm font-semibold text-blue-900">Facturas de Venta Asociadas</h5>
-            <Button
-              type="button"
-              onClick={() => {
-                const newFactura = { id: uid(), codigo: "", rut: "", monto: 0 };
-                setOT({ ...(ot||{}), facturasVenta: [...(ot.facturasVenta || []), newFactura] });
-              }}
-              size="sm"
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              + Agregar Factura
-            </Button>
-          </div>
-
-          {(!ot.facturasVenta || ot.facturasVenta.length === 0) ? (
-            <p className="text-sm text-blue-700 italic">No hay facturas de venta. Haz clic en "Agregar Factura".</p>
-          ) : (
-            <div className="space-y-3">
-              {(ot.facturasVenta || []).map((factura) => (
-                <div key={factura.id} className="grid md:grid-cols-[1fr_1fr_1fr_auto] gap-3 p-3 bg-white rounded-lg border border-blue-200">
-                  <Field label="Código de Factura">
-                    <Input
-                      value={factura.codigo || ""}
-                      onChange={e => setOT({
-                        ...(ot||{}),
-                        facturasVenta: (ot.facturasVenta || []).map(f =>
-                          f.id === factura.id ? { ...f, codigo: e.target.value } : f
-                        )
-                      })}
-                      placeholder="Ej: FV-1234"
-                      className="h-9"
-                    />
-                  </Field>
-                  <Field label="RUT Cliente">
-                    <Input
-                      value={factura.rut || ""}
-                      onChange={e => setOT({
-                        ...(ot||{}),
-                        facturasVenta: (ot.facturasVenta || []).map(f =>
-                          f.id === factura.id ? { ...f, rut: e.target.value } : f
-                        )
-                      })}
-                      placeholder="76.123.456-7"
-                      className="h-9"
-                    />
-                  </Field>
-                  <Field label="Monto Total">
-                    <MoneyInput
-                      valueNumber={Number(factura.monto || 0)}
-                      onValueNumberChange={val => setOT({
-                        ...(ot||{}),
-                        facturasVenta: (ot.facturasVenta || []).map(f =>
-                          f.id === factura.id ? { ...f, monto: val } : f
-                        )
-                      })}
-                      placeholder="0"
-                      className="h-9"
-                    />
-                  </Field>
-                  <div className="flex items-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setOT({
-                        ...(ot||{}),
-                        facturasVenta: (ot.facturasVenta || []).filter(f => f.id !== factura.id)
-                      })}
-                      className="h-9 text-red-600 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
 {/* Tabla de Servicios OT (EDICIÓN) */}
 <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-soft-lg hover:shadow-soft-lg transition-all duration-300 overflow-hidden group animate-fade-in">
   <CardContent className="p-0">
@@ -3917,7 +3835,7 @@ const addFactura = () => setFacturas([
 
       {/* Facturas múltiples */}
       <div>
-        <h4 className="font-semibold mb-2">Facturas de Venta</h4>
+        <h4 className="font-semibold mb-2">Facturas de Compra</h4>
         <div className="flex items-center justify-between mb-2">
           <div></div>
           <Button variant="secondary" className="gap-2" onClick={addFactura}><Plus size={16}/> Agregar Factura</Button>
