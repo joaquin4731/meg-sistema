@@ -36,7 +36,7 @@ jobs:
           path: release/*.exe
 
   build-mac-intel:
-    runs-on: macos-12  # Intel x64 architecture
+    runs-on: macos-15-large  # Intel x64 architecture (macOS 15 Intel)
 
     steps:
       - name: Checkout code
