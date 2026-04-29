@@ -6,9 +6,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUserDataPath: () => ipcRenderer.invoke('get-user-data-path'),
   getLocalDbPath: () => ipcRenderer.invoke('get-local-db-path'),
 
-  // Sincronización con servidor remoto
-  syncWithRemote: (remoteUrl) => ipcRenderer.invoke('sync-with-remote', remoteUrl),
-
   // Exportar/Importar base de datos
   exportDatabase: () => ipcRenderer.invoke('export-database'),
   importDatabase: () => ipcRenderer.invoke('import-database'),
