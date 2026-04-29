@@ -1108,7 +1108,7 @@ const exportToExcel = () => {
           {company === 'MyOrganic' ? (
             <img src="./logo-myorganic.png" alt="MyOrganic" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
           ) : company === 'AVAR' ? (
-            <img src="./logo-avar.png" alt="AVAR" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
+            <img src="./logo-avar.jpeg" alt="AVAR" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
           ) : (
             <img src="./logo-meg.png" alt="MEG Industrial" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
           )}

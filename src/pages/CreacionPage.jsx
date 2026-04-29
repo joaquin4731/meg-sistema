@@ -288,7 +288,7 @@ const getBrandConfig = (user) => {
   if (user === "avar") return {
     primaryColor: "#15803d",
     accentColor: "#16a34a",
-    logo: "./logo-avar.png",
+    logo: "./logo-avar.jpeg",
     name: "AVAR",
   };
   // MEG (default)
@@ -764,7 +764,7 @@ export default function CreacionPage() {
             ciudad: "",
             telefono: "",
             web: "",
-            logoPath: "./logo-avar.png",
+            logoPath: "./logo-avar.jpeg",
           }
         : {
             rut: "77.427.875-3",
