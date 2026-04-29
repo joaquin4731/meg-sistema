@@ -347,8 +347,8 @@ function cleanupDeletedItems() {
  * @returns {Object} - { valid: boolean, filteredData?: Object, error?: String }
  */
 function validateDataStructure(userKey, data) {
-  const isMainApartment = userKey === 'meg' || userKey === 'myorganic';
-  const isCreacionApartment = userKey === 'meg_creacion' || userKey === 'myorganic_creacion';
+  const isMainApartment = userKey === 'meg' || userKey === 'myorganic' || userKey === 'avar';
+  const isCreacionApartment = userKey === 'meg_creacion' || userKey === 'myorganic_creacion' || userKey === 'avar_creacion';
 
   if (isMainApartment) {
     // Apartado principal: SOLO debe tener cotizaciones
@@ -441,8 +441,10 @@ function initDatabase() {
         const initialData = {
           'meg': { cotizaciones: [] },
           'myorganic': { cotizaciones: [] },
+          'avar': { cotizaciones: [] },
           'meg_creacion': { clientes: [], cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] },
-          'myorganic_creacion': { clientes: [], cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] }
+          'myorganic_creacion': { clientes: [], cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] },
+          'avar_creacion': { clientes: [], cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] }
         };
 
         db.get('SELECT COUNT(*) as count FROM app_data', (err, row) => {
@@ -478,6 +480,19 @@ function initDatabase() {
             });
           } else {
             console.log('Database already has data');
+
+            // Asegurar que existan las filas de AVAR (por si es una BD anterior)
+            const avarDefaults = {
+              'avar': { cotizaciones: [] },
+              'avar_creacion': { clientes: [], cotizaciones: [], ordenesCompra: [], ordenesTrabajo: [] }
+            };
+            const avarStmt = db.prepare('INSERT OR IGNORE INTO app_data (id, content) VALUES (?, ?)');
+            Object.entries(avarDefaults).forEach(([key, value]) => {
+              avarStmt.run(key, JSON.stringify(value));
+            });
+            avarStmt.finalize(() => {
+              console.log('✅ Filas AVAR aseguradas en BD existente');
+            });
 
             // Programar backup automático (a las 2:00 AM cada día)
             scheduleNextBackup();
@@ -517,13 +532,16 @@ function startExpressServer() {
       const DEFAULT_MEG_PASSWORD = 'meg4731$';
       const DEFAULT_MYORGANIC_PASSWORD = 'myorganic4731$';
 
+      const DEFAULT_AVAR_PASSWORD = 'avar4731$';
+
       const credentials = {
         'meg_2025': process.env.MEG_PASSWORD || DEFAULT_MEG_PASSWORD,
-        'myorganic_2025': process.env.MYORGANIC_PASSWORD || DEFAULT_MYORGANIC_PASSWORD
+        'myorganic_2025': process.env.MYORGANIC_PASSWORD || DEFAULT_MYORGANIC_PASSWORD,
+        'avar_2025': process.env.AVAR_PASSWORD || DEFAULT_AVAR_PASSWORD
       };
 
       // ⚠️ Advertir si se están usando credenciales por defecto
-      if (!process.env.MEG_PASSWORD || !process.env.MYORGANIC_PASSWORD) {
+      if (!process.env.MEG_PASSWORD || !process.env.MYORGANIC_PASSWORD || !process.env.AVAR_PASSWORD) {
         console.warn('═══════════════════════════════════════');
         console.warn('⚠️  ADVERTENCIA DE SEGURIDAD');
         console.warn('═══════════════════════════════════════');
@@ -536,16 +554,23 @@ function startExpressServer() {
       // Mapeo de username a userKey
       const usernameToKey = {
         'meg_2025': 'meg',
-        'myorganic_2025': 'myorganic'
+        'myorganic_2025': 'myorganic',
+        'avar_2025': 'avar'
       };
 
       if (credentials[username] === password) {
         const userKey = usernameToKey[username];
+        const companyNames = {
+          'meg': 'MEG Industrial',
+          'myorganic': 'MyOrganic',
+          'avar': 'AVAR'
+        };
+
         res.json({
           success: true,
           username,
           userKey,
-          company: userKey === 'meg' ? 'MEG Industrial' : 'MyOrganic'
+          company: companyNames[userKey] || userKey
         });
       } else {
         res.status(401).json({ success: false, message: 'Credenciales inválidas' });

@@ -483,7 +483,7 @@ function LoginScreen() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="meg_2025 o myorganic_2025"
+                placeholder="meg_2025, myorganic_2025 o avar_2025"
                 className="h-12 border-2 focus:border-blue-500 transition-all duration-300 bg-white/50 backdrop-blur"
                 required
               />
@@ -546,7 +546,7 @@ function LoginScreen() {
           {/* User hints */}
           <div className="pt-4 border-t border-slate-200">
             <p className="text-xs text-slate-500 text-center mb-3 font-medium">Usuarios disponibles:</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <div className="bg-gradient-to-br from-orange-50 to-orange-100/50 border border-orange-200/50 rounded-lg p-3 hover:shadow-md transition-shadow">
                 <p className="text-xs font-semibold text-orange-800 mb-1">MEG Industrial</p>
                 <code className="text-xs bg-white/80 px-2 py-1 rounded border border-orange-200 text-orange-700 font-mono">meg_2025</code>
@@ -555,13 +555,17 @@ function LoginScreen() {
                 <p className="text-xs font-semibold text-blue-800 mb-1">MyOrganic</p>
                 <code className="text-xs bg-white/80 px-2 py-1 rounded border border-blue-200 text-blue-700 font-mono">myorganic_2025</code>
               </div>
+              <div className="bg-gradient-to-br from-green-50 to-green-100/50 border border-green-200/50 rounded-lg p-3 hover:shadow-md transition-shadow">
+                <p className="text-xs font-semibold text-green-800 mb-1">AVAR</p>
+                <code className="text-xs bg-white/80 px-2 py-1 rounded border border-green-200 text-green-700 font-mono">avar_2025</code>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Footer */}
         <div className="text-center mt-6 text-sm text-slate-600 font-medium animate-fade-in" style={{animation: 'fadeIn 1s ease-out 0.3s backwards'}}>
-          <p>© 2025 MEG Industrial & MyOrganic</p>
+          <p>© 2025 MEG Industrial, MyOrganic & AVAR</p>
         </div>
       </div>
 
@@ -659,7 +663,7 @@ function MainApp({ user, company, onLogout }) {
 
 
   const COLORS = useMemo(() => {
-  if (user === 'myorganic') {
+  if (company === 'MyOrganic') {
     return {
       ingresos: "#3b82f6",       // blue-500
       ingresosSoft: "#93c5fd",   // blue-300
@@ -667,6 +671,17 @@ function MainApp({ user, company, onLogout }) {
       costosSoft: "#fca5a5",     // red-300
       utilidad: "#10b981",       // emerald-500
       utilidadSoft: "#86efac",   // emerald-300
+      grid: "#e5e7eb",
+    };
+  }
+  if (company === 'AVAR') {
+    return {
+      ingresos: "#16a34a",       // green-600
+      ingresosSoft: "#86efac",   // green-300
+      costos: "#ef4444",         // red-500
+      costosSoft: "#fca5a5",     // red-300
+      utilidad: "#0d9488",       // teal-600
+      utilidadSoft: "#99f6e4",   // teal-200
       grid: "#e5e7eb",
     };
   }
@@ -679,7 +694,7 @@ function MainApp({ user, company, onLogout }) {
     utilidadSoft: "#86efac",     // emerald-300
     grid: "#e5e7eb",
   };
-}, [user]);
+}, [company]);
 
 
   // KPIs globales (ingresos por facturas; costos por OT con impuestos por servicio)
@@ -864,7 +879,7 @@ const compData = useMemo(() => ([
         }
 
         // Validar que backup.data tenga las claves esperadas
-        const expectedKeys = ['meg', 'myorganic', 'meg_creacion', 'myorganic_creacion'];
+        const expectedKeys = ['meg', 'myorganic', 'avar', 'meg_creacion', 'myorganic_creacion', 'avar_creacion'];
         const actualKeys = Object.keys(backup.data);
 
         if (actualKeys.length === 0) {
@@ -886,7 +901,7 @@ const compData = useMemo(() => ([
           }
 
           // Verificar que apartados principales tengan array de cotizaciones
-          if (key === 'meg' || key === 'myorganic') {
+          if (key === 'meg' || key === 'myorganic' || key === 'avar') {
             if (!Array.isArray(value.cotizaciones)) {
               toast.error(`Formato de backup inválido: ${key} debe tener array de cotizaciones`);
               return;
@@ -894,7 +909,7 @@ const compData = useMemo(() => ([
           }
 
           // Verificar que apartados de creación tengan los 4 arrays
-          if (key === 'meg_creacion' || key === 'myorganic_creacion') {
+          if (key === 'meg_creacion' || key === 'myorganic_creacion' || key === 'avar_creacion') {
             const requiredArrays = ['clientes', 'cotizaciones', 'ordenesCompra', 'ordenesTrabajo'];
             for (const arr of requiredArrays) {
               if (!Array.isArray(value[arr])) {
@@ -1078,6 +1093,8 @@ const exportToExcel = () => {
   <aside className={`w-72 h-screen ${
     company === 'MyOrganic'
       ? 'bg-gradient-to-br from-blue-600 via-blue-700 to-blue-900'
+      : company === 'AVAR'
+      ? 'bg-gradient-to-br from-green-600 via-green-700 to-green-900'
       : 'bg-gradient-to-br from-orange-400 via-orange-500 to-orange-600'
   } text-white fixed left-0 top-0 flex flex-col justify-between p-6 shadow-2xl z-30 animate-slide-in-left`}>
 
@@ -1086,10 +1103,12 @@ const exportToExcel = () => {
       <div className="flex flex-col items-center justify-center mt-4 mb-6 animate-fade-in-down">
         <div className="relative group">
           <div className={`absolute inset-0 ${
-            company === 'MyOrganic' ? 'bg-blue-400' : 'bg-orange-300'
+            company === 'MyOrganic' ? 'bg-blue-400' : company === 'AVAR' ? 'bg-green-400' : 'bg-orange-300'
           } blur-xl opacity-50 group-hover:opacity-70 transition-opacity duration-300`}></div>
           {company === 'MyOrganic' ? (
             <img src="./logo-myorganic.png" alt="MyOrganic" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
+          ) : company === 'AVAR' ? (
+            <img src="./logo-avar.png" alt="AVAR" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
           ) : (
             <img src="./logo-meg.png" alt="MEG Industrial" className="relative h-24 mb-4 drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-300" />
           )}
@@ -1172,6 +1191,8 @@ const exportToExcel = () => {
               <TabsList className={`flex w-full md:w-auto gap-2 p-1.5 rounded-2xl border shadow-soft ${
                 company === 'MyOrganic'
                   ? 'bg-gradient-to-r from-blue-50 to-blue-100/50 border-blue-200/50'
+                  : company === 'AVAR'
+                  ? 'bg-gradient-to-r from-green-50 to-green-100/50 border-green-200/50'
                   : 'bg-gradient-to-r from-orange-50 to-orange-100/50 border-orange-200/50'
               }`}>
                 <TabsTrigger
@@ -1179,6 +1200,8 @@ const exportToExcel = () => {
                   className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 ${
                     company === 'MyOrganic'
                       ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-blue-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-blue-500/30'
+                      : company === 'AVAR'
+                      ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-600 data-[state=active]:to-green-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-green-500/30'
                       : 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-600 data-[state=active]:to-orange-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-orange-500/30'
                   } bg-transparent text-slate-700 hover:text-slate-900 data-[state=active]:scale-105`}
                 >
@@ -1192,6 +1215,8 @@ const exportToExcel = () => {
                   className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 ${
                     company === 'MyOrganic'
                       ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-blue-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-blue-500/30'
+                      : company === 'AVAR'
+                      ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-600 data-[state=active]:to-green-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-green-500/30'
                       : 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-600 data-[state=active]:to-orange-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-orange-500/30'
                   } bg-transparent text-slate-700 hover:text-slate-900 data-[state=active]:scale-105`}
                 >
@@ -1205,6 +1230,8 @@ const exportToExcel = () => {
                   className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all duration-300 ${
                     company === 'MyOrganic'
                       ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-blue-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-blue-500/30'
+                      : company === 'AVAR'
+                      ? 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-600 data-[state=active]:to-green-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-green-500/30'
                       : 'data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-600 data-[state=active]:to-orange-700 data-[state=active]:text-white data-[state=active]:shadow-lg data-[state=active]:shadow-orange-500/30'
                   } bg-transparent text-slate-700 hover:text-slate-900 data-[state=active]:scale-105`}
                 >
@@ -1243,6 +1270,8 @@ const exportToExcel = () => {
                 className={`px-3 py-1.5 rounded-md border border-slate-300 focus:outline-none focus:ring-2 ${
                   company === 'MyOrganic'
                     ? 'focus:ring-blue-500 focus:border-blue-500'
+                    : company === 'AVAR'
+                    ? 'focus:ring-green-500 focus:border-green-500'
                     : 'focus:ring-orange-500 focus:border-orange-500'
                 } text-slate-700 bg-white`}
               >
@@ -1353,7 +1382,7 @@ const exportToExcel = () => {
                         <Brush
                           dataKey="mes"
                           height={30}
-                          stroke={company === 'MyOrganic' ? '#3b82f6' : '#ff6600'}
+                          stroke={company === 'MyOrganic' ? '#3b82f6' : company === 'AVAR' ? '#16a34a' : '#ff6600'}
                           fill="#f8fafc"
                           travellerWidth={10}
                         />
@@ -1768,7 +1797,7 @@ const exportToExcel = () => {
     {/* FOOTER */}
     <footer className="mt-8 bg-gradient-to-r from-slate-900 to-slate-800 text-white">
       <div className="max-w-7xl mx-auto px-6 py-4 text-sm flex items-center justify-center">
-        <span>© {new Date().getFullYear()} {user === 'myorganic' ? 'MyOrganic' : 'MEG Industrial'}. Todos los derechos reservados.</span>
+        <span>© {new Date().getFullYear()} {company}. Todos los derechos reservados.</span>
       </div>
     </footer>
   </main>

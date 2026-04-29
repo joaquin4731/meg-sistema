@@ -279,12 +279,24 @@ const extraerValorNumerico = (texto) => {
    Configuración de marca por usuario
    =========================== */
 const getBrandConfig = (user) => {
-  const isMeg = user === "meg" || user === null;
+  if (user === "myorganic") return {
+    primaryColor: "#2563eb",
+    accentColor: "#3b82f6",
+    logo: "./logo-myorganic.png",
+    name: "MyOrganic",
+  };
+  if (user === "avar") return {
+    primaryColor: "#15803d",
+    accentColor: "#16a34a",
+    logo: "./logo-avar.png",
+    name: "AVAR",
+  };
+  // MEG (default)
   return {
-    primaryColor: isMeg ? "#ff6600" : "#2563eb",
-    accentColor: isMeg ? "#ff7a26" : "#3b82f6",
-    logo: isMeg ? "./logo-meg.png" : "./logo-myorganic.png",
-    name: isMeg ? "MEG Industrial" : "MyOrganic",
+    primaryColor: "#ff6600",
+    accentColor: "#ff7a26",
+    logo: "./logo-meg.png",
+    name: "MEG Industrial",
   };
 };
 
@@ -727,10 +739,12 @@ export default function CreacionPage() {
         }
       };
 
-      const isMyOrganic = authUser?.userKey === "myorganic";
-      
-      const labelTipo = 
-        documento.tipo === "cotizacion" ? "Cotización" : 
+      const userKey = authUser?.userKey;
+      const isMyOrganic = userKey === "myorganic";
+      const isAvar = userKey === "avar";
+
+      const labelTipo =
+        documento.tipo === "cotizacion" ? "Cotización" :
         documento.tipo === "orden_compra" ? "Orden de Compra" :
         "Orden de Trabajo"; // ✅ NUEVO
 
@@ -742,6 +756,15 @@ export default function CreacionPage() {
             telefono: "+56 9 30782884",
             web: "https://myorganic.cl/",
             logoPath: "./logo-myorganic.png",
+          }
+        : isAvar
+        ? {
+            rut: "76.685.962-3",
+            direccion: "",
+            ciudad: "",
+            telefono: "",
+            web: "",
+            logoPath: "./logo-avar.png",
           }
         : {
             rut: "77.427.875-3",
@@ -1346,6 +1369,8 @@ export default function CreacionPage() {
 
         const tituloCondiciones = isMyOrganic
           ? "CONDICIONES COMERCIALES – MYORGANIC"
+          : isAvar
+          ? "CONDICIONES COMERCIALES – AVAR"
           : "CONDICIONES COMERCIALES – MEG MONTAJES";
 
         // Calcular todas las líneas primero para estimar espacio
@@ -1414,7 +1439,7 @@ export default function CreacionPage() {
         color: rgb(0.8, 0.8, 0.8),
       });
       
-      const footerText = `Documento generado el ${new Date().toLocaleDateString('es-CL')} | ${isMyOrganic ? "MyOrganic" : "MEG Industrial"}`;
+      const footerText = `Documento generado el ${new Date().toLocaleDateString('es-CL')} | ${isMyOrganic ? "MyOrganic" : isAvar ? "AVAR" : "MEG Industrial"}`;
       const footerW = textWidth(footerText, 8, font);
       page.drawText(footerText, {
         x: (width - footerW) / 2,
