@@ -264,18 +264,14 @@ function performAutoBackup() {
 }
 
 /**
- * Limpieza automática: DESACTIVADA
- * (La función se mantiene por compatibilidad pero no hace nada)
+ * Limpieza automática de items eliminados
+ * Elimina permanentemente items con deleted=true que tengan más de 30 días
+ * Los backups automáticos preservan el historial antes de la limpieza
  */
 function cleanupDeletedItems() {
-  console.log('[CLEANUP] ⚠️ Cleanup automático DESACTIVADO');
-  return;
-
-  // Código comentado para referencia (NO se ejecuta)
-  /*
   if (!db) return;
 
-  console.log('[CLEANUP] Iniciando limpieza automática de items eliminados...');
+  console.log('[CLEANUP] Iniciando limpieza de items eliminados (>30 días)...');
 
   const DAYS_TO_KEEP = 30;
   const cutoffDate = new Date();
@@ -295,31 +291,28 @@ function cleanupDeletedItems() {
         const data = JSON.parse(row.content);
         let hasChanges = false;
 
-        // Limpiar cada tipo de array
         ['cotizaciones', 'clientes', 'ordenesCompra', 'ordenesTrabajo'].forEach(key => {
           if (Array.isArray(data[key])) {
             const originalLength = data[key].length;
 
-            // Filtrar: eliminar items con deleted=true Y updatedAt > 30 días
             data[key] = data[key].filter(item => {
-              if (!item.deleted) return true; // Mantener items NO eliminados
+              if (!item.deleted) return true;
 
               const itemDate = item.updatedAt || item.fecha || null;
-              if (!itemDate) return true; // Si no tiene fecha, mantener por seguridad
+              if (!itemDate) return true; // Sin fecha: mantener por seguridad
 
-              return itemDate > cutoffISO; // Mantener si es más reciente que 30 días
+              return itemDate > cutoffISO; // Mantener si fue eliminado hace menos de 30 días
             });
 
             const cleaned = originalLength - data[key].length;
             if (cleaned > 0) {
-              console.log(`[CLEANUP] ${row.id} - ${key}: eliminados ${cleaned} items antiguos`);
+              console.log(`[CLEANUP] ${row.id} - ${key}: eliminados ${cleaned} items`);
               totalCleaned += cleaned;
               hasChanges = true;
             }
           }
         });
 
-        // Si hubo cambios, actualizar en la base de datos
         if (hasChanges) {
           const updatedContent = JSON.stringify(data);
           db.run(
@@ -338,12 +331,11 @@ function cleanupDeletedItems() {
     });
 
     if (totalCleaned > 0) {
-      console.log(`[CLEANUP] ✅ Limpieza completada: ${totalCleaned} items eliminados`);
+      console.log(`[CLEANUP] ✅ Limpieza completada: ${totalCleaned} items eliminados permanentemente`);
     } else {
-      console.log('[CLEANUP] ✅ No hay items antiguos para limpiar');
+      console.log('[CLEANUP] ✅ Sin items para limpiar');
     }
   });
-  */
 }
 
 /**
@@ -477,6 +469,11 @@ function initDatabase() {
               // Programar backup automático (a las 2:00 AM cada día)
               scheduleNextBackup();
 
+              // Ejecutar limpieza al iniciar (después de 5 minutos)
+              setTimeout(() => cleanupDeletedItems(), 5 * 60 * 1000);
+              // Repetir limpieza cada 30 días
+              setInterval(() => cleanupDeletedItems(), 30 * 24 * 60 * 60 * 1000);
+
               resolve();
             });
           } else {
@@ -484,6 +481,11 @@ function initDatabase() {
 
             // Programar backup automático (a las 2:00 AM cada día)
             scheduleNextBackup();
+
+            // Ejecutar limpieza al iniciar (después de 5 minutos)
+            setTimeout(() => cleanupDeletedItems(), 5 * 60 * 1000);
+            // Repetir limpieza cada 30 días
+            setInterval(() => cleanupDeletedItems(), 30 * 24 * 60 * 60 * 1000);
 
             resolve();
           }

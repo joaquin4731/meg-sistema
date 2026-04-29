@@ -628,6 +628,9 @@ export default function CreacionPage() {
       const MAX_PAGES = 50;
       const MAX_RECURSION_DEPTH = 5;
 
+      // Flag para detectar si algún texto fue truncado durante la generación
+      let wasTruncated = false;
+
       let page = pdfDoc.addPage([A4.w, A4.h]);
       let { width, height } = page.getSize();
       let y = height - margin;
@@ -643,8 +646,10 @@ export default function CreacionPage() {
       };
       
       const wrapText = (txt, maxWidth, size, f = font) => {
+        const originalLength = String(txt ?? "").length;
         // Limitar longitud del texto de entrada a 10000 caracteres
         const raw = String(txt ?? "").substring(0, 10000).replace(/\s+/g, " ").trim();
+        if (originalLength > 10000) wasTruncated = true;
         if (!raw) return ["—"];
         const words = raw.split(" ");
         const lines = [];
@@ -653,7 +658,10 @@ export default function CreacionPage() {
         const MAX_LINES = 100; // Límite de líneas por campo
 
         for (const w of words) {
-          if (lineCount >= MAX_LINES) break;
+          if (lineCount >= MAX_LINES) {
+            wasTruncated = true;
+            break;
+          }
           const test = cur ? cur + " " + w : w;
           if (textWidth(test, size, f) <= maxWidth) {
             cur = test;
@@ -1419,7 +1427,8 @@ export default function CreacionPage() {
       const pdfBytes = await pdfDoc.save();
       return {
         bytes: pdfBytes,
-        nombre: `${labelTipo.toLowerCase().replace(/ /g, '-')}-${documento.numero || Date.now()}.pdf`
+        nombre: `${labelTipo.toLowerCase().replace(/ /g, '-')}-${documento.numero || Date.now()}.pdf`,
+        wasTruncated
       };
   };
 
@@ -1432,10 +1441,14 @@ export default function CreacionPage() {
       );
 
       const pdfPromise = generarPDF(documento);
-      const { bytes, nombre } = await Promise.race([pdfPromise, timeoutPromise]);
+      const { bytes, nombre, wasTruncated } = await Promise.race([pdfPromise, timeoutPromise]);
 
       const blob = new Blob([bytes], { type: "application/pdf" });
       saveAs(blob, nombre);
+
+      if (wasTruncated) {
+        toast.warning('Advertencia: Algunos textos fueron truncados por ser demasiado largos. Revisa el PDF generado.');
+      }
     } catch (err) {
       console.error("Error al generar PDF:", err);
       toast.error(`Error al generar el PDF: ${err.message}`);
@@ -1453,7 +1466,11 @@ export default function CreacionPage() {
       );
 
       const pdfPromise = generarPDF(documento);
-      const { bytes, nombre } = await Promise.race([pdfPromise, timeoutPromise]);
+      const { bytes, nombre, wasTruncated } = await Promise.race([pdfPromise, timeoutPromise]);
+
+      if (wasTruncated) {
+        toast.warning('Advertencia: Algunos textos fueron truncados por ser demasiado largos. Revisa el PDF generado.');
+      }
 
       if (window.electronAPI) {
         // En Electron: abrir con visor del sistema

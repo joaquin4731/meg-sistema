@@ -122,6 +122,9 @@ const toInt = (s = "") => {
   return isNaN(parsed) ? 0 : parsed;
 };
 
+// Convierte cualquier valor a número seguro (devuelve 0 si NaN)
+const safeNum = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
+
 /** <MoneyInput/> muestra 1.500.000 pero entrega números (p.ej. 1500000) al padre */
 function MoneyInput({
   valueNumber = 0,
@@ -374,8 +377,8 @@ function getFacturasArray(cot) {
 
 /** BASE del servicio: cantidad * costo */
 function itemBase(it) {
-  const qty = Number(it.cantidad || 0);
-  const cost = Number(it.costo || 0);
+  const qty = safeNum(it.cantidad);
+  const cost = safeNum(it.costo);
   return qty * cost;
 }
 
@@ -387,7 +390,7 @@ function itemIVA(it) {
 /** Otro impuesto por servicio (porcentaje sobre el BASE) si está activo */
 function itemOtro(it) {
   if (!it?.otroActivo) return 0;
-  const pct = Number(it?.otroPorcentaje || 0);
+  const pct = safeNum(it?.otroPorcentaje);
   return itemBase(it) * (pct / 100);
 }
 
@@ -406,7 +409,7 @@ function calcOTTotal(ot) {
 function sumFacturas(cot, usarNetoSinIVA) {
   const arr = getFacturasArray(cot);
   return arr.reduce((s, f) => {
-    const bruto = Number(f?.total || 0);
+    const bruto = safeNum(f?.total);
     const val = usarNetoSinIVA ? (bruto / 1.19) : bruto;
     return s + val;
   }, 0);

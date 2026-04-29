@@ -36,7 +36,9 @@ jobs:
           path: release/*.exe
 
   build-mac-intel:
-    runs-on: macos-15-large  # Intel x64 architecture (macOS 15 Intel)
+    # Cross-compilación x64 desde runner ARM (gratuito)
+    # Los runners Intel (macos-12/13) están deprecados; macos-15-large es pago
+    runs-on: macos-latest
 
     steps:
       - name: Checkout code
@@ -50,6 +52,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Rebuild native modules for Intel x64
+        run: npx electron-builder install-app-deps --arch x64
 
       - name: Build Mac App (Intel x64)
         run: npm run build:mac:x64
