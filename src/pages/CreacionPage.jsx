@@ -760,10 +760,10 @@ export default function CreacionPage() {
         : isAvar
         ? {
             rut: "76.685.962-3",
-            direccion: "",
-            ciudad: "",
-            telefono: "",
-            web: "",
+            direccion: "E. Pinto Lagarrigue 1886, Valle Hermoso",
+            ciudad: "San Pedro de la Paz, Bío Bío",
+            telefono: "+56 9 3078 2884",
+            web: "https://avarmontajes.cl/",
             logoPath: "./logo-avar.jpeg",
           }
         : {
