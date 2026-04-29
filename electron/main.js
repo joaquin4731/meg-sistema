@@ -473,8 +473,8 @@ function initDatabase() {
 
               // Ejecutar limpieza al iniciar (después de 5 minutos)
               setTimeout(() => cleanupDeletedItems(), 5 * 60 * 1000);
-              // Repetir limpieza cada 30 días
-              setInterval(() => cleanupDeletedItems(), 30 * 24 * 60 * 60 * 1000);
+              // Repetir limpieza cada 24 horas (86.400.000ms, dentro del límite de Node.js)
+              setInterval(() => cleanupDeletedItems(), 24 * 60 * 60 * 1000);
 
               resolve();
             });
@@ -499,8 +499,8 @@ function initDatabase() {
 
             // Ejecutar limpieza al iniciar (después de 5 minutos)
             setTimeout(() => cleanupDeletedItems(), 5 * 60 * 1000);
-            // Repetir limpieza cada 30 días
-            setInterval(() => cleanupDeletedItems(), 30 * 24 * 60 * 60 * 1000);
+            // Repetir limpieza cada 24 horas (86.400.000ms, dentro del límite de Node.js)
+            setInterval(() => cleanupDeletedItems(), 24 * 60 * 60 * 1000);
 
             resolve();
           }
