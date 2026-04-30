@@ -288,7 +288,7 @@ const getBrandConfig = (user) => {
   if (user === "avar") return {
     primaryColor: "#15803d",
     accentColor: "#16a34a",
-    logo: "./logo-avar.jpeg",
+    logo: "./logo-avar.png",
     name: "AVAR",
   };
   // MEG (default)
@@ -764,7 +764,7 @@ export default function CreacionPage() {
             ciudad: "San Pedro de la Paz, Bío Bío",
             telefono: "+56 9 3078 2884",
             web: "https://avarmontajes.cl/",
-            logoPath: "./logo-avar.jpeg",
+            logoPath: "./logo-avar.png",
           }
         : {
             rut: "77.427.875-3",
@@ -793,8 +793,8 @@ export default function CreacionPage() {
         const startY = y;
         
         if (logoImg) {
-          const maxW = 120;
-          const maxH = 60;
+          const maxW = isAvar ? 150 : 120;
+          const maxH = isAvar ? 75 : 60;
           const imgRatio = logoImg.width / logoImg.height;
           
           let wLogo, hLogo;
