@@ -519,6 +519,7 @@ export default function CreacionPage() {
       formaPago: "45 DÍAS HÁBILES CONTRA ORDEN DE COMPRA",
       // ✅ NUEVO: Condiciones comerciales (TODOS los tipos de documento)
       condicionesComerciales: "",
+      descuento: { nombre: "", porcentaje: 0, descripcion: "" },
       // ✅ NUEVO: Para OT, referencia a cotización
       cotizacionId: tipo === "orden_trabajo" ? null : undefined,
       // 🔽🔽🔽 NUEVO: Solo para OT
@@ -1263,6 +1264,47 @@ export default function CreacionPage() {
 
       y -= line * 2;
 
+      // Descuento
+      const descNombre = documento.descuento?.nombre || "";
+      const descPorcentaje = Number(documento.descuento?.porcentaje || 0);
+      const descDescripcion = documento.descuento?.descripcion || "";
+      const montoDesc = Math.round((documento.totalNeto || 0) * descPorcentaje / 100);
+      const totalConDesc = (documento.totalNeto || 0) - montoDesc;
+      const tieneDescuento = descNombre !== "";
+
+      if (tieneDescuento) {
+        ensureSpace(line * 8);
+
+        // Subtotal
+        page.drawText("Subtotal", {
+          x: X.desc, y, size: 11, font: bold, color: rgb(0.2, 0.2, 0.2)
+        });
+        drawRight(page, fmtMoney(documento.totalNeto || 0), X.right - 10, y, 11, bold, rgb(0.2, 0.2, 0.2));
+
+        y -= line * 1.8;
+
+        // Fila de descuento
+        const descLabel = `${descNombre} (${descPorcentaje}%)`;
+        page.drawText(descLabel, { x: X.desc, y, size: 10, font, color: rgb(0.3, 0.3, 0.3) });
+        drawRight(page, `- ${fmtMoney(montoDesc)}`, X.right - 10, y, 10, font, rgb(0.75, 0.15, 0.15));
+
+        if (descDescripcion) {
+          y -= line;
+          page.drawText(descDescripcion, { x: X.desc, y, size: 9, font, color: rgb(0.5, 0.5, 0.5) });
+        }
+
+        y -= line * 1.8;
+
+        page.drawLine({
+          start: { x: X.pUnit - 10, y },
+          end: { x: X.right - 10, y },
+          thickness: 0.5,
+          color: rgb(0.7, 0.7, 0.7),
+        });
+
+        y -= line * 1.5;
+      }
+
       page.drawRectangle({
         x: X.pUnit - 10,
         y: y - line - 4,
@@ -1273,15 +1315,15 @@ export default function CreacionPage() {
 
       y -= 4;
 
-      page.drawText("VALOR TOTAL NETO", { 
+      page.drawText("VALOR TOTAL NETO", {
         x: X.desc,
-        y, 
-        size: 12, 
+        y,
+        size: 12,
         font: bold,
         color: rgb(0.2, 0.2, 0.2)
       });
 
-      const totalFinal = fmtMoney(documento.totalNeto || 0);
+      const totalFinal = fmtMoney(tieneDescuento ? totalConDesc : (documento.totalNeto || 0));
       drawRight(page, totalFinal, X.right - 10, y, 14, bold, rgb(1, 0.4, 0));
 
       // ✅ NUEVO: Sección personalizable
@@ -2540,6 +2582,11 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
       }
     }
 
+    // Migración: agregar descuento si no existe
+    if (!migrado.descuento) {
+      migrado.descuento = { nombre: "", porcentaje: 0, descripcion: "" };
+    }
+
     // Migración de items: agregar precioUnitarioTexto si no existe
     if (migrado.items && Array.isArray(migrado.items)) {
       migrado.items = migrado.items.map(item => {
@@ -2930,6 +2977,39 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
                   className="min-h-[80px]"
                 />
               </div>
+
+              <div>
+                <Label className="font-medium">Descuento (opcional)</Label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <div>
+                    <Label className="text-xs text-slate-500">Nombre</Label>
+                    <Input
+                      value={draft.descuento?.nombre || ""}
+                      onChange={(e) => setDraft(d => ({ ...d, descuento: { ...(d.descuento || {}), nombre: e.target.value } }))}
+                      placeholder="Ej: Descuento especial"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-slate-500">Porcentaje (%)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={draft.descuento?.porcentaje ?? 0}
+                      onChange={(e) => setDraft(d => ({ ...d, descuento: { ...(d.descuento || {}), porcentaje: Number(e.target.value) || 0 } }))}
+                    />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <Label className="text-xs text-slate-500">Descripción (opcional)</Label>
+                  <Input
+                    value={draft.descuento?.descripcion || ""}
+                    onChange={(e) => setDraft(d => ({ ...d, descuento: { ...(d.descuento || {}), descripcion: e.target.value } }))}
+                    placeholder="Ej: Descuento por volumen"
+                  />
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -3003,9 +3083,28 @@ function DocumentoEditor({ documento, clientes, cotizaciones, onSave, onClose, b
           </div>
 
           <div className="flex justify-end">
-            <div className="text-right">
-              <div className="text-sm text-slate-500">Valor Total Neto</div>
-              <div className="text-2xl font-bold">{fmtMoney(draft.totalNeto || 0)}</div>
+            <div className="text-right space-y-1">
+              {draft.descuento?.nombre ? (
+                <>
+                  <div>
+                    <div className="text-xs text-slate-400">Subtotal</div>
+                    <div className="text-lg font-semibold text-slate-700">{fmtMoney(draft.totalNeto || 0)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">{draft.descuento.nombre} ({draft.descuento.porcentaje ?? 0}%)</div>
+                    <div className="text-base font-medium text-red-600">- {fmtMoney(Math.round((draft.totalNeto || 0) * (Number(draft.descuento.porcentaje) || 0) / 100))}</div>
+                  </div>
+                  <div className="border-t pt-1">
+                    <div className="text-xs text-slate-400">Valor Total Neto</div>
+                    <div className="text-2xl font-bold">{fmtMoney(Math.round((draft.totalNeto || 0) * (1 - (Number(draft.descuento.porcentaje) || 0) / 100)))}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm text-slate-500">Valor Total Neto</div>
+                  <div className="text-2xl font-bold">{fmtMoney(draft.totalNeto || 0)}</div>
+                </>
+              )}
             </div>
           </div>
 

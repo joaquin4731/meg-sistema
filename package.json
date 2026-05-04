@@ -1,6 +1,6 @@
 {
   "name": "meg-sistema-electron",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "MEG Industrial & MyOrganic - Sistema de Gestión (Aplicación de Escritorio)",
   "main": "electron/main.js",
   "author": "MEG Industrial",
